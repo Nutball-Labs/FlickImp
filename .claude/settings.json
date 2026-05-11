@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git:*)",
+      "Bash(git -C:*)",
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(wc:*)",
+      "Bash(chmod +x scripts/*.sh)",
+      "Bash(g++ --version)",
+      "Bash(clang++ --version)",
+      "Bash(gh release:*)",
+      "Bash(gh auth status 2>&1)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(python3:*)",
+      "Bash(brew --version)",
+      "Bash(brew info:*)",
+      "Bash(brew install:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)"
+    ]
+  },
+  "spinnerTipsEnabled": false
+}
