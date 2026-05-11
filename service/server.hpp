@@ -9,7 +9,7 @@ class Server {
 public:
     Server(const std::string& db_path,
            const std::string& web_root,
-           int port = 8080);
+           int port = 8647);
     ~Server();
 
     Server(const Server&)            = delete;

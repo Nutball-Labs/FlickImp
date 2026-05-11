@@ -93,7 +93,7 @@ static int run_check(const std::string& db_path) {
 }
 
 int main(int argc, char* argv[]) {
-    int port = 8080;
+    int port = 8647;
     std::string web_root;
     bool check_mode = false;
 
@@ -111,7 +111,7 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--help" || arg == "-h") {
             std::cout <<
                 "Usage: flickimp [OPTIONS]\n"
-                "  --port N     HTTP port for the web interface (default: 8080)\n"
+                "  --port N     HTTP port for the web interface (default: 8647)\n"
                 "  --web DIR    Web assets directory\n"
                 "  --check      Check IMDB for new episodes on all tracked shows, then exit\n"
                 "  --version    Print version and exit\n";

@@ -105,7 +105,7 @@ bump SNs, bump version, commit, and push.
 
 ## Architecture — Critical Decisions
 
-*(Document project-specific architecture decisions here as they are made.)*
+- **Config format: JSON** — all configuration files use JSON; chosen for human editability without technical knowledge, flexibility, and familiarity. No INI, TOML, YAML, or custom formats.
 
 ---
 
@@ -127,6 +127,16 @@ Run before first build: `sudo dnf install libcurl-devel && ./scripts/get-deps.sh
 ## Backlog / Shower Thoughts
 
 - **IMDB clipboard import/export** — copy IMDB URL for a show, movie, or specific episode to/from clipboard; useful for quick lookup or pasting into browser
+- **systemd service unit** — ship a `flickimp.service` unit file so the daemon can be managed with `systemctl` like any other service; should handle restart-on-failure, run as a non-root user, and point to the installed binary and web assets
+- **flickimp-gui** — optional Qt6 desktop GUI for direct local editing on the host machine; talks to the same SQLite database as the daemon; useful when you're sitting at the server and don't want to open a browser
+- **named queues / watchlists** — configurable named queues (e.g. "Patsy", "Steve", "Together") that appear as tabs in both the web UI and the Qt GUI; each queue is an independent list of shows and movies; allows isolating solo watching from shared watching without mixing entries
+- **per-queue PIN protection** — DEFERRED / LOW PRIORITY; optional PIN on individual queues to keep adult content away from kids; intentionally not implementing full security — no desire to maintain an auth system; if pursued, keep it minimal (simple PIN, no sessions, no crypto beyond basic hashing)
+- **My Services** — user-configurable list of streaming services they actually subscribe to; used to filter out availability results for services they don't have; stored in config, editable from the UI; the service field on shows should draw from this list as a dropdown
+- **Mark watched and advance** — one-click to increment episode (or roll to next season) without opening an edit form; most common action deserves the shortest path
+- **Last-watched timestamp** — date field on show/movie records; surfaces stale entries and shows what's actively in progress
+- **Cancelled/abandoned status** — additional show status beyond Watching/Paused/Finished for shows that died mid-run or that the user gave up on; keeps them out of the active list without deleting history
+- **On deck view** — web UI view filtered to shows where IMDB says unwatched episodes exist ahead of current position; surfaces the CLI `--check` results directly in the browser
+- **Bulk CSV import** — import an initial watchlist from a simple CSV; saves manual entry on first run
 
 ---
 
