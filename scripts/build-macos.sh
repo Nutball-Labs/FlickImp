@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build-macos.sh — Full compile for Watching on macOS (Homebrew Qt6)
+# build-macos.sh — Full compile for FlickImp on macOS (Homebrew Qt6)
 # Run directly from any directory; locates project root relative to this script.
 #
 # Usage:

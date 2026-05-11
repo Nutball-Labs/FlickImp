@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gen_line_count.sh — Daily line count snapshot for Watching
+# gen_line_count.sh — Daily line count snapshot for FlickImp
 # Writes Line_Counts/line_count_YYYYMMDD.md in the project root.
 # Scheduled via crontab: 0 1 * * *
 
@@ -81,7 +81,7 @@ t_grand=$(( t_src_cpp + t_src_h + t_cmake + t_md + t_man ))
 # ---------------------------------------------------------------------------
 {
 cat <<HEADER
-# Watching Line Count — ${DISPLAY_DATE}
+# FlickImp Line Count — ${DISPLAY_DATE}
 
 ## Grand Total: $(fmt $t_grand) lines
 

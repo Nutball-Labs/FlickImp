@@ -1,18 +1,18 @@
-# Watching — Claude Code Project Context
+# FlickImp — Claude Code Project Context
 
 This file is read automatically by Claude Code at session startup.
 It contains standing instructions, architecture decisions, and conventions
-for working on the Watching project. Read this before touching any code.
+for working on the FlickImp project. Read this before touching any code.
 
 ---
 
 ## Project Overview
 
-**Watching** is [BRIEF DESCRIPTION — one sentence].
-Private GitHub repo at https://github.com/Nutball-Labs/Watching — all work on `main` branch.
+**FlickImp** is [BRIEF DESCRIPTION — one sentence].
+Private GitHub repo at https://github.com/Nutball-Labs/FlickImp — all work on `main` branch.
 
 **Current version:** 0.1.0 (SN 00001)
-**Config dir:** `~/.config/watching/`
+**Config dir:** `~/.config/flickimp/`
 **Build system:** CMake
 
 ---
@@ -27,29 +27,39 @@ experience — don't over-explain Linux basics. Does need help with C++ idioms.
 
 ## Source Files
 
-*(No source files written yet — scaffolding phase.)*
-
 ### Library (`lib/`) — compiled into `libwatchinglib.a`
 
 | File | Role |
 |---|---|
-| `lib/platform.cpp/.hpp` | OS abstraction: home/config paths — `namespace Watching::Platform` |
-| `lib/version.hpp` | Version string from components via macros |
-| `lib/watching.hpp` | Umbrella public API header |
+| `lib/version.hpp` | Version macros; `APP_NAME`, `APP_VERSION`, license notice |
+| `lib/flickimp.hpp` | Umbrella header — include this in consumers of the lib |
+| `lib/models.hpp` | POD structs: `Show`, `Movie`; `ShowStatus`, `MovieStatus` enums |
+| `lib/platform.cpp/.hpp` | XDG paths: `config_dir()`, `data_dir()`, `db_path()` |
+| `lib/database.cpp/.hpp` | SQLite wrapper — CRUD for shows and movies; `DbError` exception |
+| `lib/scraper.cpp/.hpp` | IMDB scraping via libcurl — episode count, title lookup (TODO) |
 
-### CLI front-end (`cli/`) — compiled into `watching` binary
-
-| File | Role |
-|---|---|
-| `cli/main.cpp` | CLI argument parsing, orchestration |
-
-### GUI (`gui/`) — compiled into `watching-gui` binary (Qt6)
+### Service (`service/`) — compiled into `flickimp` binary (HTTP daemon)
 
 | File | Role |
 |---|---|
-| `gui/main.cpp` | Qt application entry point |
-| `gui/MainWindow.cpp/.h` | Main window |
-| `gui/AboutDialog.cpp/.h` | About dialog (Nutball-Labs logo) |
+| `service/main.cpp` | Arg parsing (`--port`, `--web`), web root resolution, starts server |
+| `service/server.hpp/.cpp` | `httplib` HTTP server; REST API routes; JSON serialisation |
+
+### Web frontend (`web/`) — static assets served by the daemon
+
+| File | Role |
+|---|---|
+| `web/index.html` | Single-page app shell |
+| `web/style.css` | Dark theme styles |
+| `web/app.js` | Vanilla JS — fetch API, render shows/movies tables, add/delete/update |
+
+### Third-party (vendored, not committed)
+
+| Dep | File(s) | Fetched by |
+|---|---|---|
+| SQLite amalgamation | `third_party/sqlite3/sqlite3.{c,h}` | `scripts/get-deps.sh` |
+| cpp-httplib | `third_party/httplib.h` | `scripts/get-deps.sh` |
+| nlohmann/json | `third_party/json.hpp` | `scripts/get-deps.sh` |
 
 ---
 
@@ -105,12 +115,27 @@ bump SNs, bump version, commit, and push.
 |---|---|---|
 | g++ (C++17) | `gcc-c++` (Alma base) | GCC 11+ recommended |
 | CMake 3.16+ | `cmake` (Alma base) | Build system |
+| libcurl | `libcurl-devel` | IMDB scraping |
+| SQLite3 amalgamation | `scripts/get-deps.sh` | Vendored in `third_party/` |
+| cpp-httplib | `scripts/get-deps.sh` | Vendored in `third_party/` |
+| nlohmann/json | `scripts/get-deps.sh` | Vendored in `third_party/` |
+
+Run before first build: `sudo dnf install libcurl-devel && ./scripts/get-deps.sh`
+
+---
+
+## Backlog / Shower Thoughts
+
+- **IMDB clipboard import/export** — copy IMDB URL for a show, movie, or specific episode to/from clipboard; useful for quick lookup or pasting into browser
 
 ---
 
 ## Known Issues / Pending Work
 
-- Source files not yet written — scaffolding phase only
+- `scraper.cpp`: IMDB episode parsing implemented; depends on IMDB's `__NEXT_DATA__` JSON structure which can change — if `--check` stops returning episode data, re-examine the path under `props.pageProps`
+- No IMDB ID auto-lookup on show/movie add — must enter manually for now
+- No streaming availability lookup — phase 2
+- No systemd unit file yet — run manually with `./build-linux/flickimp`
 
 ---
 
@@ -118,8 +143,8 @@ bump SNs, bump version, commit, and push.
 
 - All work on `main` branch
 - Commit after each stable version cut
-- Commit message format: `"Fix/Add/Update description — Watching vX.Y.Z (SN NNNNN)"`
-- Remote: `git@github.com:Nutball-Labs/Watching.git` (SSH key auth)
+- Commit message format: `"Fix/Add/Update description — FlickImp vX.Y.Z (SN NNNNN)"`
+- Remote: `git@github.com:Nutball-Labs/FlickImp.git` (SSH key auth)
 - After committing: `git push origin main`
 
 ---
@@ -151,8 +176,9 @@ When a communication is prefaced with either label:
 
 ## Phase Status
 
-- **Phase 1 (CLI):** Not yet started — architecture planned
-- **Phase 2 (Qt6 GUI):** Not yet started — architecture planned
+- **Phase 1 (HTTP service + web UI):** Source structure complete; needs `get-deps.sh` run + first build
+- **Phase 2 (IMDB scraping):** Stubs in place; implementation pending
+- **Phase 3 (Streaming availability):** Out of scope — not planned
 - All work on `main` branch
 
 <!-- SN: 00001 -->

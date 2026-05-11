@@ -1,4 +1,4 @@
-# build-windows.ps1 — Full compile for Watching on Windows (MinGW + Qt6)
+# build-windows.ps1 — Full compile for FlickImp on Windows (MinGW + Qt6)
 # Run directly from PowerShell — locates project root relative to this script.
 #
 # Usage:
@@ -6,7 +6,7 @@
 #   .\scripts\build-windows.ps1 -Clean    -- wipe build dir first, then configure + build
 #   .\scripts\build-windows.ps1 -NoGui    -- build CLI tools only (skip Qt6 GUI + windeployqt)
 #
-# Build dir: C:\tmp\watching-build-win  (local drive avoids NFS file-locking)
+# Build dir: C:\tmp\flickimp-build-win  (local drive avoids NFS file-locking)
 # Requires:  Qt6 Online Installer -> MinGW 13.1 toolchain + Ninja + CMake
 #            https://www.qt.io/download-qt-installer
 #
@@ -26,8 +26,8 @@ $wix          = "$env:USERPROFILE\.dotnet\tools\wix.exe"
 $gcc          = "$mingwBin\gcc.exe"
 $gpp          = "$mingwBin\g++.exe"
 $src          = (Split-Path $PSScriptRoot -Parent)
-$build        = "C:\tmp\watching-build-win"   # local drive — NFS locks break AutoRcc
-$dest         = "N:\watching\build-win"       # final artifact destination on NFS
+$build        = "C:\tmp\flickimp-build-win"   # local drive — NFS locks break AutoRcc
+$dest         = "N:\flickimp\build-win"       # final artifact destination on NFS
 
 # MinGW must be on PATH so Ninja and the linker can find runtime DLLs
 $env:PATH = "$mingwBin;$env:PATH"
@@ -66,8 +66,8 @@ if (-not $NoGui) {
     if (Test-Path $windeployqt) {
         Write-Host ""
         Write-Host "--- Qt deployment (windeployqt) ---"
-        & $windeployqt --release --no-translations "$build\watching-gui.exe"
-        if ($LASTEXITCODE -ne 0) { Write-Host "windeployqt (watching-gui) failed"; exit 1 }
+        & $windeployqt --release --no-translations "$build\flickimp-gui.exe"
+        if ($LASTEXITCODE -ne 0) { Write-Host "windeployqt (flickimp-gui) failed"; exit 1 }
         # Add additional GUI executables here if the project has more than one.
     } else {
         Write-Host "WARNING: windeployqt not found at $windeployqt - Qt DLLs will not be bundled"

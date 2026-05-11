@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build-linux.sh — Full compile for Watching on Linux (Alma/RHEL/Fedora)
+# build-linux.sh — Full compile for FlickImp on Linux (Alma/RHEL/Fedora)
 # Run directly from any directory; locates project root relative to this script.
 #
 # Usage:

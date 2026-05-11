@@ -6,9 +6,9 @@
 #   ./scripts/package-macos.sh
 #
 # Output: packages/ at project root
-#   watching-X.Y.Z-macOS.pkg      (pkgbuild installer)
-#   watching-X.Y.Z-macOS.tar.gz   (CPack TGZ)
-#   watching-X.Y.Z-macOS.zip      (CPack ZIP)
+#   flickimp-X.Y.Z-macOS.pkg      (pkgbuild installer)
+#   flickimp-X.Y.Z-macOS.tar.gz   (CPack TGZ)
+#   flickimp-X.Y.Z-macOS.zip      (CPack ZIP)
 #
 # Requires: Xcode Command Line Tools (pkgbuild), cmake
 
@@ -35,7 +35,7 @@ cmake --build "$BUILD" --target pkg
 
 echo ""
 echo "Packages:"
-ls -lh "$PROJ/packages"/watching-*macOS* 2>/dev/null \
+ls -lh "$PROJ/packages"/flickimp-*macOS* 2>/dev/null \
     | awk '{print "  "$NF, "("$5")"}'
 
 # SN: 00001

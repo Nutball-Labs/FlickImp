@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# release.sh — Upload Watching packages to a GitHub release
+# release.sh — Upload FlickImp packages to a GitHub release
 # Run after the relevant package-*.sh scripts have produced packages.
 #
 # Usage: ./scripts/release.sh --linux | --mac | --win | --all
@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-REPO="Nutball-Labs/Watching"
+REPO="Nutball-Labs/FlickImp"
 PROJ="$(cd "$(dirname "$0")/.." && pwd)"
 PKG_DIR="$PROJ/packages"
 VHP="$PROJ/lib/version.hpp"
@@ -47,7 +47,7 @@ PATCH=$(grep -m1 '#define VERSION_PATCH'  "$VHP" | awk '{print $3}' | tr -d '\r'
 SUFFIX=$(grep -m1 '#define VERSION_SUFFIX' "$VHP" | grep -oP '(?<=")[^"]*' | tr -d '\r' || true)
 CURRENT="${MAJOR}.${MINOR}.${PATCH}${SUFFIX}"
 
-echo "Watching release uploader"
+echo "FlickImp release uploader"
 echo "Current version in lib/version.hpp: v${CURRENT}"
 echo ""
 
@@ -77,25 +77,25 @@ PKGS=()
 
 if $DO_LINUX; then
     mapfile -t _linux < <(find "$PKG_DIR" -maxdepth 1 \( \
-            -name "watching-${VERSION}-*.rpm"        \
+            -name "flickimp-${VERSION}-*.rpm"        \
         -o  -name "watching_${VERSION}_*.deb"        \
-        -o  -name "watching-${VERSION}-Linux.tar.gz" \
+        -o  -name "flickimp-${VERSION}-Linux.tar.gz" \
         \) | sort)
     PKGS+=("${_linux[@]}")
 fi
 
 if $DO_MAC; then
     mapfile -t _mac < <(find "$PKG_DIR" -maxdepth 1 \( \
-            -name "watching-${VERSION}-macOS.pkg"    \
-        -o  -name "watching-${VERSION}-macOS.tar.gz" \
-        -o  -name "watching-${VERSION}-macOS.zip"    \
+            -name "flickimp-${VERSION}-macOS.pkg"    \
+        -o  -name "flickimp-${VERSION}-macOS.tar.gz" \
+        -o  -name "flickimp-${VERSION}-macOS.zip"    \
         \) | sort)
     PKGS+=("${_mac[@]}")
 fi
 
 if $DO_WIN; then
     mapfile -t _win < <(find "$PKG_DIR" -maxdepth 1 \
-            -name "watching-${VERSION}-win64.*"      \
+            -name "flickimp-${VERSION}-win64.*"      \
         | grep -v '\.wixpdb$' | sort)
     PKGS+=("${_win[@]}")
 fi
@@ -127,7 +127,7 @@ else
     LATEST_ARG=(); $MARK_LATEST && LATEST_ARG=(--latest)
     gh release create "$TAG" "${PKGS[@]}" \
         --repo "$REPO" \
-        --title "Watching ${TAG}" \
+        --title "FlickImp ${TAG}" \
         --generate-notes \
         "${LATEST_ARG[@]}"
 fi

@@ -7,8 +7,11 @@ endif()
 
 set(OUTFILE "${SRC}/sn_audit.txt")
 
-file(GLOB LIB_CPP   "${SRC}/lib/*.cpp")
-file(GLOB LIB_HPP   "${SRC}/lib/*.hpp")
+file(GLOB LIB_CPP     "${SRC}/lib/*.cpp")
+file(GLOB LIB_HPP     "${SRC}/lib/*.hpp")
+file(GLOB SERVICE_CPP "${SRC}/service/*.cpp")
+file(GLOB SERVICE_HPP "${SRC}/service/*.hpp")
+# Legacy GUI/CLI globs — empty if those dirs don't exist, that's fine
 file(GLOB CLI_CPP   "${SRC}/cli/*.cpp")
 file(GLOB CLI_HPP   "${SRC}/cli/*.hpp")
 file(GLOB GUI_CPP   "${SRC}/gui/*.cpp")
@@ -20,6 +23,7 @@ file(GLOB SH_FILES    "${SRC}/scripts/*.sh")
 
 set(ALL_SRC
     ${LIB_CPP} ${LIB_HPP}
+    ${SERVICE_CPP} ${SERVICE_HPP}
     ${CLI_CPP} ${CLI_HPP}
     ${GUI_CPP} ${GUI_HPP}
     ${MD_FILES}
@@ -36,7 +40,7 @@ foreach(EXTRA
 endforeach()
 
 string(TIMESTAMP NOW "%Y-%m-%d %H:%M:%S")
-file(WRITE "${OUTFILE}" "--- Watching SN Audit: ${NOW} ---\n")
+file(WRITE "${OUTFILE}" "--- FlickImp SN Audit: ${NOW} ---\n")
 
 foreach(F ${ALL_SRC})
     get_filename_component(FNAME "${F}" NAME)

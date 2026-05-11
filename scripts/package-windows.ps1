@@ -5,8 +5,8 @@
 #   .\scripts\package-windows.ps1
 #
 # Output: packages\ at project root
-#   watching-X.Y.Z-win64.zip
-#   watching-X.Y.Z-win64.msi
+#   flickimp-X.Y.Z-win64.zip
+#   flickimp-X.Y.Z-win64.msi
 #
 # Requires: WiX 6  (dotnet tool install --global wix)
 #           https://wixtoolset.org/releases/
@@ -15,7 +15,7 @@ $cmake  = "C:\Qt\Tools\CMake_64\bin\cmake.exe"
 $cpack  = "C:\Qt\Tools\CMake_64\bin\cpack.exe"
 $wix    = "$env:USERPROFILE\.dotnet\tools\wix.exe"
 $src    = (Split-Path $PSScriptRoot -Parent)
-$build  = "C:\tmp\watching-build-win"
+$build  = "C:\tmp\flickimp-build-win"
 
 $null = New-Item -ItemType Directory -Force "$src\packages"
 
@@ -45,7 +45,7 @@ if (Test-Path $wix) {
 
 Write-Host ""
 Write-Host "Packages:"
-Get-ChildItem "$src\packages\watching-*-win64.*" |
+Get-ChildItem "$src\packages\flickimp-*-win64.*" |
     Where-Object { $_.Extension -ne ".wixpdb" } |
     Select-Object Name, @{N="Size";E={"{0:N0} KB" -f ($_.Length/1KB)}}
 

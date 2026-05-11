@@ -1,4 +1,4 @@
-# Watching — Project Brief
+# FlickImp — Project Brief
 ## For use at the start of new AI sessions to restore context quickly
 
 ---
@@ -30,15 +30,15 @@ Target OS: Alma Linux 9.x (RHEL 9 based).
 |---|---|
 | `lib/platform.cpp/.hpp` | OS abstraction: config dir path, home path |
 | `lib/version.hpp` | Macros: `VERSION_MAJOR`, `VERSION_MINOR`, `VERSION_PATCH`, `VERSION_SUFFIX` |
-| `lib/watching.hpp` | Umbrella header — include this in consumers of the lib |
+| `lib/flickimp.hpp` | Umbrella header — include this in consumers of the lib |
 
-### CLI (`cli/`) — compiled into `watching` binary
+### CLI (`cli/`) — compiled into `flickimp` binary
 
 | File | Role |
 |---|---|
 | `cli/main.cpp` | Argument parsing; core workflow; exits |
 
-### GUI (`gui/`) — compiled into `watching-gui` binary (Qt6)
+### GUI (`gui/`) — compiled into `flickimp-gui` binary (Qt6)
 
 | File | Role |
 |---|---|
@@ -90,9 +90,9 @@ Packages land in: `packages/`
 
 ## GitHub
 
-Repo: `git@github.com:Nutball-Labs/Watching.git`
+Repo: `git@github.com:Nutball-Labs/FlickImp.git`
 All work on `main` branch.
-Commit format: `"Fix/Add/Update description — Watching vX.Y.Z (SN NNNNN)"`
+Commit format: `"Fix/Add/Update description — FlickImp vX.Y.Z (SN NNNNN)"`
 
 ---
 

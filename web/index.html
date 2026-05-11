@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>FlickImp</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>FlickImp</h1>
+</header>
+
+<main>
+
+  <!-- ===== Shows ===== -->
+  <section id="shows-section">
+    <div class="section-header">
+      <h2>Now FlickImp</h2>
+      <button class="btn-add" onclick="showAddShowForm()">+ Show</button>
+    </div>
+
+    <div id="shows-list" class="card-list">
+      <div class="empty">Loading...</div>
+    </div>
+
+    <div id="add-show-form" class="add-form hidden">
+      <h3>Add Show</h3>
+      <div class="form-grid">
+        <input class="span2" type="text" id="new-show-title"
+               placeholder="Title" autocomplete="off">
+        <input type="text" id="new-show-service"
+               placeholder="Service" list="services-list" autocomplete="off">
+        <datalist id="services-list">
+          <option value="Netflix">
+          <option value="HBO Max">
+          <option value="Disney+">
+          <option value="Prime Video">
+          <option value="Apple TV+">
+          <option value="Peacock">
+          <option value="Hulu">
+          <option value="Paramount+">
+        </datalist>
+        <input type="text" id="new-show-imdb"
+               placeholder="IMDB ID (optional)" autocomplete="off">
+        <input type="number" id="new-show-season"
+               placeholder="Season" min="1" value="1" inputmode="numeric">
+        <input type="number" id="new-show-episode"
+               placeholder="Episode" min="1" value="1" inputmode="numeric">
+      </div>
+      <div class="form-actions">
+        <button class="btn-primary" onclick="addShow()">Add</button>
+        <button class="btn-cancel"  onclick="hideAddShowForm()">Cancel</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Movies ===== -->
+  <section id="movies-section">
+    <div class="section-header">
+      <h2>Movies Watchlist</h2>
+      <button class="btn-add" onclick="showAddMovieForm()">+ Movie</button>
+    </div>
+
+    <div id="movies-list" class="card-list">
+      <div class="empty">Loading...</div>
+    </div>
+
+    <div id="add-movie-form" class="add-form hidden">
+      <h3>Add Movie</h3>
+      <div class="form-grid">
+        <input class="span2" type="text" id="new-movie-title"
+               placeholder="Title" autocomplete="off">
+        <input type="text" id="new-movie-imdb"
+               placeholder="IMDB ID (optional)" autocomplete="off">
+        <input type="text" id="new-movie-notes"
+               placeholder="Notes (e.g. releasing Q3)" autocomplete="off">
+      </div>
+      <div class="form-actions">
+        <button class="btn-primary" onclick="addMovie()">Add</button>
+        <button class="btn-cancel"  onclick="hideAddMovieForm()">Cancel</button>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

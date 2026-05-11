@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Nutball Labs / Stephen Berg
 #pragma once
 
-#define APP_NAME "Watching"
+#define APP_NAME "FlickImp"
 
 #define VERSION_MAJOR  0
 #define VERSION_MINOR  1
@@ -22,10 +22,10 @@ static const char PROJECT_LICENSE_NOTICE[] =
 #else
 static const char PROJECT_LICENSE_NOTICE[] __attribute__((used)) =
 #endif
-    "Watching " APP_VERSION "\n"
+    "FlickImp " APP_VERSION "\n"
     "| Copyright (C) 2026 Nutball Labs / Stephen Berg\n"
     "| GNU General Public License v3 or later\n"
-    "| https://github.com/Nutball-Labs/Watching\n"
+    "| https://github.com/Nutball-Labs/FlickImp\n"
     "| If you paid anyone other than Nutball Labs\n"
     "| for this software, you've been ripped off.\n"
     "|\n"

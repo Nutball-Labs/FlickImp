@@ -6,9 +6,9 @@
 #   ./scripts/package-linux.sh
 #
 # Output: packages/ at project root
-#   watching-X.Y.Z-1.x86_64.rpm
+#   flickimp-X.Y.Z-1.x86_64.rpm
 #   watching_X.Y.Z_amd64.deb
-#   watching-X.Y.Z-Linux.tar.gz
+#   flickimp-X.Y.Z-Linux.tar.gz
 #
 # Requires: cmake, rpm-build (for RPM), dpkg-deb (for DEB)
 #   sudo dnf install rpm-build
@@ -22,9 +22,9 @@ echo "=== Packaging (RPM, DEB, TGZ) ==="
 
 echo ""
 echo "Packages:"
-ls -lh "$PROJ/packages"/watching-*.rpm \
+ls -lh "$PROJ/packages"/flickimp-*.rpm \
         "$PROJ/packages"/watching_*.deb \
-        "$PROJ/packages"/watching-*-Linux.tar.gz 2>/dev/null \
+        "$PROJ/packages"/flickimp-*-Linux.tar.gz 2>/dev/null \
     | awk '{print "  "$NF, "("$5")"}'
 
 # SN: 00001

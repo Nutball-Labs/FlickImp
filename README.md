@@ -1,4 +1,4 @@
-# Watching
+# FlickImp
 
 [ONE-LINE SUMMARY — what the tool does in plain terms.]
 
@@ -40,8 +40,8 @@ sudo dnf install cmake gcc-c++ [ADDITIONAL_PACKAGES]
 ## Building from Source
 
 ```bash
-git clone git@github.com:Nutball-Labs/Watching.git
-cd Watching
+git clone git@github.com:Nutball-Labs/FlickImp.git
+cd FlickImp
 ./scripts/build-linux.sh
 ```
 
@@ -63,7 +63,7 @@ Binaries land in `build-linux/`.
 
 ## Development Paradigm
 
-Watching is built the same way as its sister projects
+FlickImp is built the same way as its sister projects
 [TagGoblin](https://github.com/Nutball-Labs/TagGoblin) and
 [PathMux](https://github.com/Nutball-Labs/PathMux) — a collaboration between
 an experienced Linux sysadmin and Claude (Anthropic's AI), which handles the
