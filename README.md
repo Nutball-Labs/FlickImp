@@ -1,6 +1,6 @@
 # FlickImp
 
-![FlickImp](images/FlickImp2.png)
+![FlickImp](images/FlickImp4.png)
 
 A self-hosted web app for tracking the TV shows and movies you're watching — where you left off, what season and episode you're on, and how many episodes are left.
 
