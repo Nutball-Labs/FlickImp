@@ -1,36 +1,38 @@
-# build-windows.ps1 — Full compile for FlickImp on Windows (MinGW + Qt6)
-# Run directly from PowerShell — locates project root relative to this script.
+# build-windows.ps1 — Build FlickImp daemon on Windows
+# Run from PowerShell; locates project root relative to this script.
 #
 # Usage:
-#   .\scripts\build-windows.ps1           -- configure (if needed) + build + Qt deploy
-#   .\scripts\build-windows.ps1 -Clean    -- wipe build dir first, then configure + build
-#   .\scripts\build-windows.ps1 -NoGui    -- build CLI tools only (skip Qt6 GUI + windeployqt)
+#   .\scripts\build-windows.ps1           -- configure + build
+#   .\scripts\build-windows.ps1 -Clean    -- wipe build dir and reconfigure
 #
-# Build dir: C:\tmp\flickimp-build-win  (local drive avoids NFS file-locking)
-# Requires:  Qt6 Online Installer -> MinGW 13.1 toolchain + Ninja + CMake
-#            https://www.qt.io/download-qt-installer
+# Build dir: <project-root>\build-win
 #
-# Adjust the tool paths below if your Qt install uses a different version.
+# Requires: CMake (on PATH), a C++17 compiler (MSVC via Visual Studio, or MinGW),
+#           and vcpkg with the static curl triplet installed.
+#
+# One-time vcpkg setup (if you don't have it):
+#   git clone https://github.com/microsoft/vcpkg C:\vcpkg
+#   C:\vcpkg\bootstrap-vcpkg.bat
+#   C:\vcpkg\vcpkg install curl:x64-windows-static
+#
+# Set VCPKG_ROOT to your vcpkg directory (or edit $vcpkgRoot below):
+#   $env:VCPKG_ROOT = "C:\vcpkg"
 
-param(
-    [switch]$Clean,
-    [switch]$NoGui
-)
+param([switch]$Clean)
 
-$cmake        = "C:\Qt\Tools\CMake_64\bin\cmake.exe"
-$ninja        = "C:\Qt\Tools\Ninja\ninja.exe"
-$qtDir        = "C:\Qt\6.10.2\mingw_64"
-$mingwBin     = "C:\Qt\Tools\mingw1310_64\bin"
-$windeployqt  = "$qtDir\bin\windeployqt.exe"
-$wix          = "$env:USERPROFILE\.dotnet\tools\wix.exe"
-$gcc          = "$mingwBin\gcc.exe"
-$gpp          = "$mingwBin\g++.exe"
-$src          = (Split-Path $PSScriptRoot -Parent)
-$build        = "C:\tmp\flickimp-build-win"   # local drive — NFS locks break AutoRcc
-$dest         = "N:\flickimp\build-win"       # final artifact destination on NFS
+$ErrorActionPreference = "Stop"
 
-# MinGW must be on PATH so Ninja and the linker can find runtime DLLs
-$env:PATH = "$mingwBin;$env:PATH"
+$vcpkgRoot     = if ($env:VCPKG_ROOT) { $env:VCPKG_ROOT } else { "C:\vcpkg" }
+$toolchainFile = "$vcpkgRoot\scripts\buildsystems\vcpkg.cmake"
+$src           = Split-Path $PSScriptRoot -Parent
+$build         = "$src\build-win"
+
+if (-not (Test-Path $toolchainFile)) {
+    Write-Host "ERROR: vcpkg not found at $vcpkgRoot"
+    Write-Host "Set the VCPKG_ROOT environment variable or edit `$vcpkgRoot in this script."
+    Write-Host "See the top of this script for setup instructions."
+    exit 1
+}
 
 if ($Clean -and (Test-Path $build)) {
     Write-Host "--- Cleaning build directory ---"
@@ -39,47 +41,28 @@ if ($Clean -and (Test-Path $build)) {
 
 if (-not (Test-Path $build)) {
     Write-Host "--- Configuring (build-win) ---"
-    $wixArg = if (Test-Path $wix) { "-DWIX_EXECUTABLE=$wix" } else { $null }
-    $cmakeArgs = @(
-        "-S", $src,
-        "-B", $build,
-        "-G", "Ninja",
-        "-DCMAKE_BUILD_TYPE=Release",
-        "-DCMAKE_C_COMPILER=$gcc",
-        "-DCMAKE_CXX_COMPILER=$gpp",
-        "-DCMAKE_MAKE_PROGRAM=$ninja",
-        "-DCMAKE_PREFIX_PATH=$qtDir"
-    )
-    if ($wixArg) { $cmakeArgs += $wixArg }
-    & $cmake @cmakeArgs
+    Write-Host "    vcpkg: $vcpkgRoot"
+    cmake -S $src -B $build `
+        -DCMAKE_BUILD_TYPE=Release `
+        -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+        -DCMAKE_TOOLCHAIN_FILE=$toolchainFile
     if ($LASTEXITCODE -ne 0) { Write-Host "Configure failed"; exit 1 }
     Write-Host ""
 }
 
 Write-Host "--- Building ---"
-& $cmake --build $build
+cmake --build $build --config Release
 if ($LASTEXITCODE -ne 0) { Write-Host "Build failed"; exit 1 }
 
-# Qt deployment — copies Qt DLLs and plugin directories into the build dir so
-# package-windows.ps1 can harvest them for the ZIP and MSI.
-if (-not $NoGui) {
-    if (Test-Path $windeployqt) {
-        Write-Host ""
-        Write-Host "--- Qt deployment (windeployqt) ---"
-        & $windeployqt --release --no-translations "$build\flickimp-gui.exe"
-        if ($LASTEXITCODE -ne 0) { Write-Host "windeployqt (flickimp-gui) failed"; exit 1 }
-        # Add additional GUI executables here if the project has more than one.
-    } else {
-        Write-Host "WARNING: windeployqt not found at $windeployqt - Qt DLLs will not be bundled"
-        Write-Host "         Adjust `$windeployqt in build-windows.ps1 or install Qt via the Qt Online Installer"
-    }
+# Copy web assets next to the binary so the daemon can find them in-place
+$webSrc = "$src\web"
+$webDst = "$build\Release\web"
+if ((Test-Path $webSrc) -and -not (Test-Path $webDst)) {
+    Copy-Item -Recurse $webSrc $webDst
 }
 
 Write-Host ""
-Write-Host "--- Copying artifacts to $dest ---"
-$null = New-Item -ItemType Directory -Force $dest
-Get-ChildItem -Path $build -Filter "*.exe" | Copy-Item -Destination $dest -Force
-Get-ChildItem -Path $build -Filter "*.dll" | Copy-Item -Destination $dest -Force
-Write-Host "Done. Artifacts in ${dest}"
+Write-Host "Done. Binary: $build\Release\flickimp.exe"
+Write-Host "      Web:    $build\Release\web\"
 
 # SN: 00001

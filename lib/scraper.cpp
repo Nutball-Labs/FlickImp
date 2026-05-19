@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Nutball Labs / Stephen Berg
 #include "scraper.hpp"
-#include <chrono>
-#include <ctime>
+#include <algorithm>
+#include <cctype>
 #include <curl/curl.h>
 #include <iostream>
 #include <json.hpp>
@@ -14,13 +14,23 @@ namespace FlickImp::Scraper {
 
 namespace {
 
-// ---------- HTTP fetch ---------------------------------------------------
+// ---------- State ---------------------------------------------------------
+
+std::string g_api_key;        // TMDB v3 API key (fallback)
+std::string g_bearer_token;   // TMDB v4 Bearer token (preferred)
+
+static const std::string TMDB_BASE  = "https://api.themoviedb.org/3";
+static const std::string IMG_BASE   = "https://image.tmdb.org/t/p/w185";
+static const std::string IMG_SMALL  = "https://image.tmdb.org/t/p/w92";
+
+// ---------- HTTP ----------------------------------------------------------
 
 size_t write_cb(char* ptr, size_t size, size_t nmemb, std::string* out) {
     out->append(ptr, size * nmemb);
     return size * nmemb;
 }
 
+// g_api_key holds the TMDB v4 Bearer token; sent as Authorization header.
 std::string fetch_url(const std::string& url) {
     CURL* curl = curl_easy_init();
     if (!curl) return {};
@@ -28,244 +38,334 @@ std::string fetch_url(const std::string& url) {
     curl_easy_setopt(curl, CURLOPT_URL,           url.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA,     &body);
-    // IMDB requires a real-ish UA; also request English to avoid locale surprises
-    curl_easy_setopt(curl, CURLOPT_USERAGENT,
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, []{
-        static curl_slist* hdrs = nullptr;
-        if (!hdrs) {
-            hdrs = curl_slist_append(hdrs, "Accept-Language: en-US,en;q=0.9");
-            hdrs = curl_slist_append(hdrs, "Accept: text/html,application/xhtml+xml");
-        }
-        return hdrs;
-    }());
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT,        20L);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT,      "FlickImp libcurl");
+    curl_slist* hdrs = nullptr;
+    if (!g_bearer_token.empty()) {
+        std::string auth = "Authorization: Bearer " + g_bearer_token;
+        hdrs = curl_slist_append(hdrs, auth.c_str());
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
+    }
     CURLcode rc = curl_easy_perform(curl);
+    if (hdrs) curl_slist_free_all(hdrs);
     curl_easy_cleanup(curl);
-    if (rc != CURLE_OK) return {};
-    return body;
+    return (rc == CURLE_OK) ? body : std::string{};
 }
 
-// ---------- HTML extraction helpers --------------------------------------
+// ---------- Helpers -------------------------------------------------------
 
-// Extract the content of a <script id="id" ...>...</script> tag.
-std::string extract_script_by_id(const std::string& html, const std::string& id) {
-    std::string needle = "id=\"" + id + "\"";
-    size_t pos = html.find(needle);
-    if (pos == std::string::npos) return {};
-    pos = html.find('>', pos);
-    if (pos == std::string::npos) return {};
-    size_t start = pos + 1;
-    size_t end = html.find("</script>", start);
-    if (end == std::string::npos) return {};
-    return html.substr(start, end - start);
+// Build a TMDB API URL. Bearer token auth uses headers (no key in URL).
+// Falls back to ?api_key= if only the v3 key is configured.
+std::string api_url(const std::string& path, const std::string& query = {}) {
+    std::string url = TMDB_BASE + path;
+    if (g_bearer_token.empty() && !g_api_key.empty()) {
+        url += "?api_key=" + g_api_key;
+        if (!query.empty()) url += "&" + query;
+    } else if (!query.empty()) {
+        url += "?" + query;
+    }
+    return url;
 }
 
-// Extract the first <script type="application/ld+json">...</script> block.
-std::string extract_json_ld(const std::string& html) {
-    const char* marker = "application/ld+json\">";
-    size_t pos = html.find(marker);
-    if (pos == std::string::npos) return {};
-    size_t start = pos + std::strlen(marker);
-    size_t end = html.find("</script>", start);
-    if (end == std::string::npos) return {};
-    return html.substr(start, end - start);
+// Fetch JSON from TMDB and parse it. Returns null json on error.
+json tmdb_get(const std::string& path, const std::string& query = {}) {
+    std::string resp = fetch_url(api_url(path, query));
+    if (resp.empty()) return nullptr;
+    try { return json::parse(resp); } catch (...) { return nullptr; }
 }
 
-// ---------- Date helpers -------------------------------------------------
-
-std::string today_iso() {
-    auto now = std::chrono::system_clock::now();
-    std::time_t t = std::chrono::system_clock::to_time_t(now);
-    std::tm* tm = std::localtime(&t);
-    char buf[11];
-    std::strftime(buf, sizeof(buf), "%Y-%m-%d", tm);
-    return buf;
-}
-
-// Build "YYYY-MM-DD" from IMDB releaseDate object {"day":N,"month":N,"year":N}.
-// Returns "" if any field is missing/zero.
-std::string make_iso_date(const json& rd) {
-    try {
-        int y = rd.at("year").get<int>();
-        int m = rd.at("month").get<int>();
-        int d = rd.at("day").get<int>();
-        if (y <= 0 || m <= 0 || d <= 0) return {};
-        char buf[11];
-        std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d", y, m, d);
-        return buf;
-    } catch (...) { return {}; }
-}
-
-// ---------- Parse basic show info from JSON-LD ---------------------------
-
-struct BasicInfo {
-    std::string type;   // "TVSeries", "Movie", etc.
-    std::string title;
-    int         total_seasons{0};
-    int         total_episodes{0};
-};
-
-std::optional<BasicInfo> parse_json_ld(const std::string& html) {
-    std::string raw = extract_json_ld(html);
-    if (raw.empty()) return std::nullopt;
-    try {
-        auto j = json::parse(raw);
-        BasicInfo info;
-        info.type  = j.value("@type", "");
-        info.title = j.value("name", "");
-        // numberOfSeasons / numberOfEpisodes may be int or string in the wild
-        if (j.contains("numberOfSeasons")) {
-            auto& v = j["numberOfSeasons"];
-            info.total_seasons = v.is_number() ? v.get<int>() : std::stoi(v.get<std::string>());
+// Strip full IMDB URLs to bare tt-numbers.
+// Requires "tt" immediately followed by a digit (avoids matching "https").
+std::string extract_tt(const std::string& raw) {
+    size_t pos = 0;
+    while (pos < raw.size()) {
+        pos = raw.find("tt", pos);
+        if (pos == std::string::npos) break;
+        if (pos + 2 < raw.size() && std::isdigit(static_cast<unsigned char>(raw[pos + 2]))) {
+            std::string id = raw.substr(pos);
+            auto end = id.find_first_not_of("t0123456789");
+            return end == std::string::npos ? id : id.substr(0, end);
         }
-        if (j.contains("numberOfEpisodes")) {
-            auto& v = j["numberOfEpisodes"];
-            info.total_episodes = v.is_number() ? v.get<int>() : std::stoi(v.get<std::string>());
-        }
-        return info;
-    } catch (...) { return std::nullopt; }
+        pos += 2;
+    }
+    return {};
 }
 
-// ---------- Parse latest aired episode from __NEXT_DATA__ ----------------
-
-// IMDB embeds episode data in __NEXT_DATA__ under several possible paths.
-// We try each known path and return the first that yields episode items.
-static const json* try_path(const json& root, std::initializer_list<const char*> keys) {
-    const json* cur = &root;
-    for (const char* k : keys) {
-        if (!cur->is_object() || !cur->contains(k)) return nullptr;
-        cur = &(*cur)[k];
-    }
-    return cur;
+// Build poster URL from TMDB poster_path (may be null).
+std::string poster_url(const json& j, const std::string& key = "poster_path") {
+    if (!j.contains(key) || j[key].is_null()) return {};
+    std::string path = j[key].get<std::string>();
+    return path.empty() ? std::string{} : IMG_BASE + path;
 }
 
-EpisodeInfo parse_latest_aired(const std::string& html) {
-    std::string raw = extract_script_by_id(html, "__NEXT_DATA__");
-    if (raw.empty()) return {};
+std::string poster_url_small(const json& j, const std::string& key = "poster_path") {
+    if (!j.contains(key) || j[key].is_null()) return {};
+    std::string path = j[key].get<std::string>();
+    return path.empty() ? std::string{} : IMG_SMALL + path;
+}
 
-    json root;
-    try { root = json::parse(raw); } catch (...) { return {}; }
+// URL-encode a string for query parameters.
+std::string url_encode(const std::string& s) {
+    CURL* curl = curl_easy_init();
+    if (!curl) return s;
+    char* enc = curl_easy_escape(curl, s.c_str(), static_cast<int>(s.size()));
+    std::string result = enc ? enc : s;
+    if (enc) curl_free(enc);
+    curl_easy_cleanup(curl);
+    return result;
+}
 
-    // Try the known paths to the episode items array
-    const json* items = nullptr;
-    const json* pp = try_path(root, {"props", "pageProps"});
-    if (pp) {
-        // Path 1 (current IMDB as of 2024-25):
-        //   pageProps.contentData.section.episodes.items
-        if (auto* p = try_path(*pp, {"contentData","section","episodes","items"}))
-            if (p->is_array()) items = p;
+// Extract 4-digit year from "YYYY-MM-DD" dates.
+std::string year_from_date(const std::string& date) {
+    return date.size() >= 4 ? date.substr(0, 4) : std::string{};
+}
 
-        // Path 2: pageProps.episodes.items
-        if (!items)
-            if (auto* p = try_path(*pp, {"episodes","items"}))
-                if (p->is_array()) items = p;
-    }
+// Find the TMDB ID for a TV show given an IMDB ID.
+// Returns 0 on failure.
+int find_tv_id(const std::string& imdb_id) {
+    auto j = tmdb_get("/find/" + imdb_id, "external_source=imdb_id");
+    if (j.is_null()) return 0;
+    try {
+        auto& results = j["tv_results"];
+        if (results.is_array() && !results.empty())
+            return results[0].value("id", 0);
+    } catch (...) {}
+    return 0;
+}
 
-    if (!items || items->empty()) return {};
-
-    std::string today = today_iso();
-    EpisodeInfo best;
-
-    for (const auto& ep : *items) {
-        try {
-            int s = 0, e = 0;
-            // season/episode may be int or string
-            if (ep.contains("season")) {
-                auto& sv = ep["season"];
-                s = sv.is_number() ? sv.get<int>() : std::stoi(sv.get<std::string>());
-            }
-            if (ep.contains("episode")) {
-                auto& ev = ep["episode"];
-                e = ev.is_number() ? ev.get<int>() : std::stoi(ev.get<std::string>());
-            }
-            if (s <= 0 || e <= 0) continue;
-
-            // Air date
-            std::string air_date;
-            if (ep.contains("releaseDate") && ep["releaseDate"].is_object())
-                air_date = make_iso_date(ep["releaseDate"]);
-
-            // Only count episodes that have actually aired
-            if (air_date.empty() || air_date > today) continue;
-
-            // Title
-            std::string title;
-            if (auto* t = try_path(ep, {"titleText","text"}))
-                if (t->is_string()) title = t->get<std::string>();
-
-            // Keep the latest by (season, episode)
-            if (s > best.season || (s == best.season && e > best.episode)) {
-                best.season   = s;
-                best.episode  = e;
-                best.title    = title;
-                best.air_date = air_date;
-            }
-        } catch (...) { continue; }
-    }
-
-    return best;
+// Find the TMDB ID for a movie given an IMDB ID.
+int find_movie_id(const std::string& imdb_id) {
+    auto j = tmdb_get("/find/" + imdb_id, "external_source=imdb_id");
+    if (j.is_null()) return 0;
+    try {
+        auto& results = j["movie_results"];
+        if (results.is_array() && !results.empty())
+            return results[0].value("id", 0);
+    } catch (...) {}
+    return 0;
 }
 
 } // namespace
 
-// ---------- Public API ---------------------------------------------------
+// ---------- Public API ----------------------------------------------------
+
+void init(const std::string& api_key, const std::string& bearer_token) {
+    g_api_key      = api_key;
+    g_bearer_token = bearer_token;
+}
 
 std::optional<ShowInfo> fetch_show_info(const std::string& imdb_id) {
-    if (imdb_id.empty()) return std::nullopt;
-
-    // 1. Fetch main title page for basic info
-    std::string title_url = "https://www.imdb.com/title/" + imdb_id + "/";
-    std::string title_html = fetch_url(title_url);
-    if (title_html.empty()) {
-        std::cerr << "    [scraper] Failed to fetch " << title_url << "\n";
+    if (g_api_key.empty()) {
+        std::cerr << "    [scraper] No TMDB API key configured\n";
+        return std::nullopt;
+    }
+    std::string id = extract_tt(imdb_id);
+    if (id.empty()) {
+        std::cerr << "    [scraper] Could not extract IMDB ID from: " << imdb_id << "\n";
         return std::nullopt;
     }
 
-    auto basic = parse_json_ld(title_html);
-    if (!basic) {
-        std::cerr << "    [scraper] Could not parse JSON-LD from " << title_url << "\n";
+    int tmdb_id = find_tv_id(id);
+    if (tmdb_id == 0) {
+        std::cerr << "    [scraper] TMDB: no TV result for " << id << "\n";
         return std::nullopt;
     }
 
-    // Only handle TV series
-    if (basic->type != "TVSeries") {
-        std::cerr << "    [scraper] " << imdb_id << " is " << basic->type
-                  << ", not a TVSeries\n";
+    auto j = tmdb_get("/tv/" + std::to_string(tmdb_id));
+    if (j.is_null()) {
+        std::cerr << "    [scraper] TMDB: failed to fetch TV details for id " << tmdb_id << "\n";
         return std::nullopt;
     }
 
     ShowInfo info;
-    info.title          = basic->title;
-    info.total_seasons  = basic->total_seasons;
-    info.total_episodes = basic->total_episodes;
+    info.tmdb_id        = tmdb_id;
+    info.title          = j.value("name", "");
+    info.image_url      = poster_url(j);
+    info.total_seasons  = j.value("number_of_seasons", 0);
+    info.total_episodes = j.value("number_of_episodes", 0);
 
-    // 2. Fetch latest season's episode list for aired-episode detection.
-    //    IMDB defaults to the current season when no season= param is given.
-    std::string ep_url = "https://www.imdb.com/title/" + imdb_id + "/episodes/";
-    std::string ep_html = fetch_url(ep_url);
-    if (!ep_html.empty()) {
-        info.latest_aired = parse_latest_aired(ep_html);
-
-        // If the latest season returned no aired episodes yet (e.g. announced
-        // but not started), try the previous season.
-        if (info.latest_aired.season == 0 && info.total_seasons > 1) {
-            int prev = info.total_seasons - 1;
-            ep_url  = "https://www.imdb.com/title/" + imdb_id
-                    + "/episodes/?season=" + std::to_string(prev);
-            ep_html = fetch_url(ep_url);
-            if (!ep_html.empty())
-                info.latest_aired = parse_latest_aired(ep_html);
-        }
-    } else {
-        std::cerr << "    [scraper] Failed to fetch episode list for " << imdb_id << "\n";
+    if (j.contains("last_episode_to_air") && !j["last_episode_to_air"].is_null()) {
+        auto& le = j["last_episode_to_air"];
+        info.latest_aired.season   = le.value("season_number", 0);
+        info.latest_aired.episode  = le.value("episode_number", 0);
+        info.latest_aired.title    = le.value("name", "");
+        info.latest_aired.air_date = le.value("air_date", "");
     }
 
     return info;
 }
 
+std::vector<EpisodeEntry> fetch_season_episodes(int tmdb_show_id, int season) {
+    if (g_api_key.empty() || tmdb_show_id <= 0) return {};
+
+    auto j = tmdb_get("/tv/" + std::to_string(tmdb_show_id)
+                    + "/season/" + std::to_string(season));
+    if (j.is_null() || !j.contains("episodes")) return {};
+
+    std::vector<EpisodeEntry> result;
+    for (const auto& ep : j["episodes"]) {
+        EpisodeEntry entry;
+        entry.season   = ep.value("season_number", 0);
+        entry.episode  = ep.value("episode_number", 0);
+        entry.title    = ep.value("name", "");
+        entry.air_date = ep.value("air_date", "");
+        entry.episode_url =
+            "https://www.themoviedb.org/tv/" + std::to_string(tmdb_show_id)
+            + "/season/" + std::to_string(season)
+            + "/episode/" + std::to_string(entry.episode);
+        if (entry.episode > 0)
+            result.push_back(std::move(entry));
+    }
+
+    std::sort(result.begin(), result.end(),
+        [](const EpisodeEntry& a, const EpisodeEntry& b) {
+            return a.episode < b.episode;
+        });
+
+    return result;
+}
+
+std::vector<SeasonSummary> fetch_show_seasons(int tmdb_show_id) {
+    if (g_api_key.empty() || tmdb_show_id <= 0) return {};
+    auto j = tmdb_get("/tv/" + std::to_string(tmdb_show_id));
+    if (j.is_null() || !j.contains("seasons")) return {};
+    std::vector<SeasonSummary> result;
+    for (const auto& s : j["seasons"]) {
+        int sn = s.value("season_number", 0);
+        if (sn <= 0) continue;  // skip specials (season 0)
+        result.push_back({sn, s.value("episode_count", 0)});
+    }
+    std::sort(result.begin(), result.end(),
+        [](const SeasonSummary& a, const SeasonSummary& b) {
+            return a.season_number < b.season_number;
+        });
+    return result;
+}
+
+std::optional<MovieInfo> fetch_movie_info(const std::string& imdb_id) {
+    if (g_api_key.empty()) return std::nullopt;
+    std::string id = extract_tt(imdb_id);
+    if (id.empty()) return std::nullopt;
+
+    int tmdb_id = find_movie_id(id);
+    if (tmdb_id == 0) {
+        // Fall back: maybe it's a TV movie — try TV results
+        tmdb_id = find_tv_id(id);
+        if (tmdb_id == 0) return std::nullopt;
+
+        // Get TV details as best approximation
+        auto j = tmdb_get("/tv/" + std::to_string(tmdb_id));
+        if (j.is_null()) return std::nullopt;
+        MovieInfo info;
+        info.tmdb_id      = tmdb_id;
+        info.title        = j.value("name", "");
+        info.image_url    = poster_url(j);
+        info.release_date = j.value("first_air_date", "");
+        return info;
+    }
+
+    auto j = tmdb_get("/movie/" + std::to_string(tmdb_id));
+    if (j.is_null()) return std::nullopt;
+
+    MovieInfo info;
+    info.tmdb_id      = tmdb_id;
+    info.title        = j.value("title", "");
+    info.image_url    = poster_url(j);
+    info.release_date = j.value("release_date", "");
+    return info;
+}
+
+std::string fetch_poster_url(const std::string& imdb_id) {
+    if (g_api_key.empty()) return {};
+    std::string id = extract_tt(imdb_id);
+    if (id.empty()) return {};
+
+    // Try TV first, then movie
+    int tmdb_id = find_tv_id(id);
+    std::string endpoint = tmdb_id > 0
+        ? "/tv/"    + std::to_string(tmdb_id)
+        : "/movie/" + std::to_string(find_movie_id(id));
+
+    auto j = tmdb_get(endpoint);
+    return j.is_null() ? std::string{} : poster_url(j);
+}
+
+std::string fetch_imdb_id(int tmdb_id) {
+    if ((g_api_key.empty() && g_bearer_token.empty()) || tmdb_id <= 0) {
+        std::cerr << "    [scraper] fetch_imdb_id: skipped (no creds or bad id=" << tmdb_id << ")\n";
+        return {};
+    }
+    auto j = tmdb_get("/tv/" + std::to_string(tmdb_id) + "/external_ids");
+    if (j.is_null()) {
+        std::cerr << "    [scraper] fetch_imdb_id: request failed for tmdb_id=" << tmdb_id << "\n";
+        return {};
+    }
+    std::string id = j.value("imdb_id", "");
+    if (id.empty())
+        std::cerr << "    [scraper] fetch_imdb_id: no imdb_id in TMDB response for tmdb_id=" << tmdb_id << "\n";
+    else
+        std::cerr << "    [scraper] fetch_imdb_id: tmdb_id=" << tmdb_id << " -> " << id << "\n";
+    return id;
+}
+
+std::string fetch_movie_imdb_id(int tmdb_id) {
+    if ((g_api_key.empty() && g_bearer_token.empty()) || tmdb_id <= 0) return {};
+    auto j = tmdb_get("/movie/" + std::to_string(tmdb_id) + "/external_ids");
+    if (j.is_null()) return {};
+    return j.value("imdb_id", "");
+}
+
+std::optional<MovieInfo> fetch_movie_info_by_tmdb_id(int tmdb_id) {
+    if ((g_api_key.empty() && g_bearer_token.empty()) || tmdb_id <= 0) return std::nullopt;
+    auto j = tmdb_get("/movie/" + std::to_string(tmdb_id));
+    if (j.is_null()) return std::nullopt;
+    MovieInfo info;
+    info.tmdb_id      = tmdb_id;
+    info.title        = j.value("title", "");
+    info.image_url    = poster_url(j);
+    info.release_date = j.value("release_date", "");
+    return info;
+}
+
+std::vector<SearchResult> search_shows(const std::string& query) {
+    if (g_api_key.empty() && g_bearer_token.empty()) return {};
+    auto j = tmdb_get("/search/tv",
+        "query=" + url_encode(query) + "&language=en-US&page=1");
+    if (j.is_null() || !j.contains("results")) return {};
+    std::vector<SearchResult> results;
+    for (const auto& r : j["results"]) {
+        if (results.size() >= 5) break;
+        SearchResult sr;
+        sr.tmdb_id    = r.value("id", 0);
+        sr.title      = r.value("name", "");
+        sr.year       = year_from_date(r.value("first_air_date", ""));
+        sr.poster_url = poster_url_small(r);
+        if (sr.tmdb_id > 0 && !sr.title.empty())
+            results.push_back(std::move(sr));
+    }
+    return results;
+}
+
+std::vector<SearchResult> search_movies(const std::string& query) {
+    if (g_api_key.empty() && g_bearer_token.empty()) return {};
+    auto j = tmdb_get("/search/movie",
+        "query=" + url_encode(query) + "&language=en-US&page=1");
+    if (j.is_null() || !j.contains("results")) return {};
+    std::vector<SearchResult> results;
+    for (const auto& r : j["results"]) {
+        if (results.size() >= 5) break;
+        SearchResult sr;
+        sr.tmdb_id    = r.value("id", 0);
+        sr.title      = r.value("title", "");
+        sr.year       = year_from_date(r.value("release_date", ""));
+        sr.poster_url = poster_url_small(r);
+        if (sr.tmdb_id > 0 && !sr.title.empty())
+            results.push_back(std::move(sr));
+    }
+    return results;
+}
+
 } // namespace FlickImp::Scraper
 
-// SN: 00001
+// SN: 00003

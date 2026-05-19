@@ -6,25 +6,55 @@
 #   ./scripts/package-linux.sh
 #
 # Output: packages/ at project root
-#   flickimp-X.Y.Z-1.x86_64.rpm
-#   watching_X.Y.Z_amd64.deb
-#   flickimp-X.Y.Z-Linux.tar.gz
+#   flickimp-X.Y.Z-1.x86_64.rpm      (RHEL / Alma / Fedora)
+#   flickimp_X.Y.Z_amd64.deb         (Debian / Ubuntu)
+#   flickimp-X.Y.Z-Linux.tar.gz      (any Linux, manual install)
 #
-# Requires: cmake, rpm-build (for RPM), dpkg-deb (for DEB)
+# Requires: cmake, rpm-build
 #   sudo dnf install rpm-build
 
 set -euo pipefail
 PROJ="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$PROJ/build-linux"
 
+# ── Version banner ────────────────────────────────────────────────────────────
+VHP="$PROJ/lib/version.hpp"
+MAJOR=$(grep -m1 '#define VERSION_MAJOR'  "$VHP" | awk '{print $3}' | tr -d '\r')
+MINOR=$(grep -m1 '#define VERSION_MINOR'  "$VHP" | awk '{print $3}' | tr -d '\r')
+PATCH=$(grep -m1 '#define VERSION_PATCH'  "$VHP" | awk '{print $3}' | tr -d '\r')
+SUFFIX=$(grep -m1 '#define VERSION_SUFFIX' "$VHP" | grep -oP '(?<=")[^"]*' | tr -d '\r' || true)
+VERSION="${MAJOR}.${MINOR}.${PATCH}${SUFFIX}"
+INNER="  Packaging FlickImp version ${VERSION}  —  Linux  "
+BORDER=$(printf '%*s' $(( ${#INNER} + 2 )) | tr ' ' '*')
+echo "$BORDER"
+echo "*${INNER}*"
+echo "$BORDER"
+echo ""
+
+# Reconfigure if version changed since last build
+if [[ -f "$BUILD/CMakeCache.txt" ]]; then
+    CACHED=$(grep -s 'FLICKIMP_VERSION:STRING=' "$BUILD/CMakeCache.txt" | cut -d= -f2 | tr -d '\r' || true)
+    if [[ "$CACHED" != "$VERSION" ]]; then
+        echo "--- Version changed ($CACHED → $VERSION), reconfiguring ---"
+        cmake -S "$PROJ" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release
+        echo ""
+    fi
+fi
+
 echo "=== Packaging (RPM, DEB, TGZ) ==="
-(cd "$BUILD" && cpack)
+echo "    Started: $(date '+%H:%M:%S')"
+echo "    Build dir: $BUILD"
+echo "    (RPM build can take several minutes — rpmbuild output appears below)"
+echo ""
+(cd "$BUILD" && cpack -V)
+echo ""
+echo "    Finished: $(date '+%H:%M:%S')"
 
 echo ""
 echo "Packages:"
-ls -lh "$PROJ/packages"/flickimp-*.rpm \
-        "$PROJ/packages"/watching_*.deb \
-        "$PROJ/packages"/flickimp-*-Linux.tar.gz 2>/dev/null \
+ls -lh "$PROJ/packages"/flickimp*.rpm \
+        "$PROJ/packages"/flickimp*.deb \
+        "$PROJ/packages"/flickimp*.tar.gz 2>/dev/null \
     | awk '{print "  "$NF, "("$5")"}'
 
 # SN: 00001

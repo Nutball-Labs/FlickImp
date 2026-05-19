@@ -9,11 +9,14 @@ FlickImp is for people who watch across multiple streaming services and want a s
 ## Features
 
 - **Show tracking** — track current season/episode, streaming service, and watch status (Watching / Paused / Finished)
+- **Season/episode picker** — click "Last watched" on any show card to open a popup with colour-coded seasons (green = all watched, orange = partial, red = none) and a per-episode checklist
 - **Movie list** — maintain a want-to-watch / watched list alongside your shows
-- **IMDB integration** — fetches total episode count for a season so you can see progress at a glance
+- **TMDB integration** — search-on-add finds the right title from The Movie Database; fetches season lists, episode titles/air-dates, poster art, and release dates automatically; IMDB ID back-filled from TMDB so the episode picker always works
+- **Check All** — ☰ menu → Check All opens a live-scrolling log showing new-episode status for every active show and back-fills any missing movie release dates
 - **Browser UI** — clean dark-theme single-page app; no install required on the client side
 - **REST API** — JSON API backing the UI; scriptable from curl or any HTTP client
 - **SQLite storage** — single database file, no separate database server required
+- **Qt6 configurator** (`flickimp-config`) — desktop app for service control and TMDB credential management
 
 ---
 
@@ -65,13 +68,13 @@ Start the daemon:
 
 Then open `http://localhost:8647` in your browser.
 
-Configuration and the SQLite database are stored under `~/.config/flickimp/`.
+Configuration is read from `/etc/flickimp/fi_config.json` when running as a system service (UID < 1000), or `~/.config/flickimp/fi_config.json` for local development. Use `flickimp-config` to set the port and TMDB credentials.
 
 ---
 
 ## Project Status
 
-**v0.1.0 — Initial scaffolding.** Source structure and build system are in place; first working build pending.
+**v0.2.1a — Active development.** HTTP daemon, web UI, TMDB integration, season/episode picker popup, and Qt6 configurator are all functional.
 
 ---
 

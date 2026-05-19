@@ -15,15 +15,20 @@ struct Show {
     int        season{1};
     int        episode{1};
     std::string imdb_id;          // e.g. "tt0903747" (optional)
-    int        total_episodes{0}; // from IMDB; 0 = unknown
+    int        tmdb_id{0};        // TMDB show ID, cached after first lookup
+    int        total_episodes{0};
     ShowStatus  status{ShowStatus::Watching};
     std::string notes;
+    std::string thumbnail_url;
 };
 
 struct Movie {
     int        id{0};
     std::string title;
     std::string imdb_id;
+    int        tmdb_id{0};        // TMDB movie ID, cached after first lookup
+    std::string release_date;
+    std::string thumbnail_url;
     MovieStatus status{MovieStatus::WantToWatch};
     std::string notes;
 };

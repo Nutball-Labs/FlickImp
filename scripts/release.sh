@@ -47,8 +47,11 @@ PATCH=$(grep -m1 '#define VERSION_PATCH'  "$VHP" | awk '{print $3}' | tr -d '\r'
 SUFFIX=$(grep -m1 '#define VERSION_SUFFIX' "$VHP" | grep -oP '(?<=")[^"]*' | tr -d '\r' || true)
 CURRENT="${MAJOR}.${MINOR}.${PATCH}${SUFFIX}"
 
-echo "FlickImp release uploader"
-echo "Current version in lib/version.hpp: v${CURRENT}"
+INNER="  FlickImp release uploader  —  v${CURRENT}  "
+BORDER=$(printf '%*s' $(( ${#INNER} + 2 )) | tr ' ' '*')
+echo "$BORDER"
+echo "*${INNER}*"
+echo "$BORDER"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -78,7 +81,7 @@ PKGS=()
 if $DO_LINUX; then
     mapfile -t _linux < <(find "$PKG_DIR" -maxdepth 1 \( \
             -name "flickimp-${VERSION}-*.rpm"        \
-        -o  -name "watching_${VERSION}_*.deb"        \
+        -o  -name "flickimp_${VERSION}_*.deb"        \
         -o  -name "flickimp-${VERSION}-Linux.tar.gz" \
         \) | sort)
     PKGS+=("${_linux[@]}")

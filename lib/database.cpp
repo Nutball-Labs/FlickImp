@@ -17,14 +17,23 @@ CREATE TABLE IF NOT EXISTS shows (
     imdb_id        TEXT    NOT NULL DEFAULT '',
     total_episodes INTEGER NOT NULL DEFAULT 0,
     status         INTEGER NOT NULL DEFAULT 0,
-    notes          TEXT    NOT NULL DEFAULT ''
+    notes          TEXT    NOT NULL DEFAULT '',
+    thumbnail_url  TEXT    NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS movies (
-    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    title   TEXT    NOT NULL,
-    imdb_id TEXT    NOT NULL DEFAULT '',
-    status  INTEGER NOT NULL DEFAULT 0,
-    notes   TEXT    NOT NULL DEFAULT ''
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    title         TEXT    NOT NULL,
+    imdb_id       TEXT    NOT NULL DEFAULT '',
+    release_date  TEXT    NOT NULL DEFAULT '',
+    thumbnail_url TEXT    NOT NULL DEFAULT '',
+    status        INTEGER NOT NULL DEFAULT 0,
+    notes         TEXT    NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS episode_watches (
+    show_id  INTEGER NOT NULL REFERENCES shows(id) ON DELETE CASCADE,
+    season   INTEGER NOT NULL,
+    episode  INTEGER NOT NULL,
+    PRIMARY KEY (show_id, season, episode)
 );
 )sql";
 
@@ -61,6 +70,22 @@ void Database::exec(const char* sql) {
 
 void Database::create_schema() {
     exec(SCHEMA);
+    // Migrations — safe to run repeatedly; SQLite ignores errors on existing columns.
+    sqlite3_exec(db_,
+        "ALTER TABLE movies ADD COLUMN release_date TEXT NOT NULL DEFAULT '';",
+        nullptr, nullptr, nullptr);
+    sqlite3_exec(db_,
+        "ALTER TABLE shows ADD COLUMN thumbnail_url TEXT NOT NULL DEFAULT '';",
+        nullptr, nullptr, nullptr);
+    sqlite3_exec(db_,
+        "ALTER TABLE movies ADD COLUMN thumbnail_url TEXT NOT NULL DEFAULT '';",
+        nullptr, nullptr, nullptr);
+    sqlite3_exec(db_,
+        "ALTER TABLE shows ADD COLUMN tmdb_id INTEGER NOT NULL DEFAULT 0;",
+        nullptr, nullptr, nullptr);
+    sqlite3_exec(db_,
+        "ALTER TABLE movies ADD COLUMN tmdb_id INTEGER NOT NULL DEFAULT 0;",
+        nullptr, nullptr, nullptr);
 }
 
 // ---------- Shows --------------------------------------------------------
@@ -76,13 +101,15 @@ Show Database::row_to_show(sqlite3_stmt* s) {
     sh.total_episodes = sqlite3_column_int(s, 6);
     sh.status         = static_cast<ShowStatus>(sqlite3_column_int(s, 7));
     sh.notes          = col_text(s, 8);
+    sh.thumbnail_url  = col_text(s, 9);
+    sh.tmdb_id        = sqlite3_column_int(s, 10);
     return sh;
 }
 
 std::vector<Show> Database::all_shows() {
     const char* sql =
-        "SELECT id,title,service,season,episode,imdb_id,total_episodes,status,notes "
-        "FROM shows ORDER BY title COLLATE NOCASE;";
+        "SELECT id,title,service,season,episode,imdb_id,total_episodes,status,"
+        "notes,thumbnail_url,tmdb_id FROM shows ORDER BY title COLLATE NOCASE;";
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
     std::vector<Show> result;
@@ -94,8 +121,8 @@ std::vector<Show> Database::all_shows() {
 
 Show Database::get_show(int id) {
     const char* sql =
-        "SELECT id,title,service,season,episode,imdb_id,total_episodes,status,notes "
-        "FROM shows WHERE id=?;";
+        "SELECT id,title,service,season,episode,imdb_id,total_episodes,status,"
+        "notes,thumbnail_url,tmdb_id FROM shows WHERE id=?;";
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
     sqlite3_bind_int(stmt, 1, id);
@@ -110,18 +137,21 @@ Show Database::get_show(int id) {
 
 int Database::add_show(const Show& s) {
     const char* sql =
-        "INSERT INTO shows (title,service,season,episode,imdb_id,total_episodes,status,notes) "
-        "VALUES (?,?,?,?,?,?,?,?);";
+        "INSERT INTO shows "
+        "(title,service,season,episode,imdb_id,total_episodes,status,notes,"
+        "thumbnail_url,tmdb_id) VALUES (?,?,?,?,?,?,?,?,?,?);";
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-    sqlite3_bind_text(stmt, 1, s.title.c_str(),   -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 2, s.service.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int (stmt, 3, s.season);
-    sqlite3_bind_int (stmt, 4, s.episode);
-    sqlite3_bind_text(stmt, 5, s.imdb_id.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int (stmt, 6, s.total_episodes);
-    sqlite3_bind_int (stmt, 7, static_cast<int>(s.status));
-    sqlite3_bind_text(stmt, 8, s.notes.c_str(),   -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt,  1, s.title.c_str(),        -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt,  2, s.service.c_str(),       -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int (stmt,  3, s.season);
+    sqlite3_bind_int (stmt,  4, s.episode);
+    sqlite3_bind_text(stmt,  5, s.imdb_id.c_str(),       -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int (stmt,  6, s.total_episodes);
+    sqlite3_bind_int (stmt,  7, static_cast<int>(s.status));
+    sqlite3_bind_text(stmt,  8, s.notes.c_str(),         -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt,  9, s.thumbnail_url.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int (stmt, 10, s.tmdb_id);
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     return static_cast<int>(sqlite3_last_insert_rowid(db_));
@@ -129,19 +159,21 @@ int Database::add_show(const Show& s) {
 
 void Database::update_show(const Show& s) {
     const char* sql =
-        "UPDATE shows SET title=?,service=?,season=?,episode=?,"
-        "imdb_id=?,total_episodes=?,status=?,notes=? WHERE id=?;";
+        "UPDATE shows SET title=?,service=?,season=?,episode=?,imdb_id=?,"
+        "total_episodes=?,status=?,notes=?,thumbnail_url=?,tmdb_id=? WHERE id=?;";
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-    sqlite3_bind_text(stmt, 1, s.title.c_str(),   -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 2, s.service.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int (stmt, 3, s.season);
-    sqlite3_bind_int (stmt, 4, s.episode);
-    sqlite3_bind_text(stmt, 5, s.imdb_id.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int (stmt, 6, s.total_episodes);
-    sqlite3_bind_int (stmt, 7, static_cast<int>(s.status));
-    sqlite3_bind_text(stmt, 8, s.notes.c_str(),   -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int (stmt, 9, s.id);
+    sqlite3_bind_text(stmt,  1, s.title.c_str(),        -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt,  2, s.service.c_str(),       -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int (stmt,  3, s.season);
+    sqlite3_bind_int (stmt,  4, s.episode);
+    sqlite3_bind_text(stmt,  5, s.imdb_id.c_str(),       -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int (stmt,  6, s.total_episodes);
+    sqlite3_bind_int (stmt,  7, static_cast<int>(s.status));
+    sqlite3_bind_text(stmt,  8, s.notes.c_str(),         -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt,  9, s.thumbnail_url.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int (stmt, 10, s.tmdb_id);
+    sqlite3_bind_int (stmt, 11, s.id);
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
 }
@@ -159,17 +191,21 @@ void Database::delete_show(int id) {
 
 Movie Database::row_to_movie(sqlite3_stmt* s) {
     Movie m;
-    m.id     = sqlite3_column_int(s, 0);
-    m.title  = col_text(s, 1);
-    m.imdb_id = col_text(s, 2);
-    m.status = static_cast<MovieStatus>(sqlite3_column_int(s, 3));
-    m.notes  = col_text(s, 4);
+    m.id            = sqlite3_column_int(s, 0);
+    m.title         = col_text(s, 1);
+    m.imdb_id       = col_text(s, 2);
+    m.release_date  = col_text(s, 3);
+    m.thumbnail_url = col_text(s, 4);
+    m.status        = static_cast<MovieStatus>(sqlite3_column_int(s, 5));
+    m.notes         = col_text(s, 6);
+    m.tmdb_id       = sqlite3_column_int(s, 7);
     return m;
 }
 
 std::vector<Movie> Database::all_movies() {
     const char* sql =
-        "SELECT id,title,imdb_id,status,notes FROM movies ORDER BY title COLLATE NOCASE;";
+        "SELECT id,title,imdb_id,release_date,thumbnail_url,status,notes,tmdb_id "
+        "FROM movies ORDER BY title COLLATE NOCASE;";
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
     std::vector<Movie> result;
@@ -180,7 +216,9 @@ std::vector<Movie> Database::all_movies() {
 }
 
 Movie Database::get_movie(int id) {
-    const char* sql = "SELECT id,title,imdb_id,status,notes FROM movies WHERE id=?;";
+    const char* sql =
+        "SELECT id,title,imdb_id,release_date,thumbnail_url,status,notes,tmdb_id "
+        "FROM movies WHERE id=?;";
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
     sqlite3_bind_int(stmt, 1, id);
@@ -195,13 +233,18 @@ Movie Database::get_movie(int id) {
 
 int Database::add_movie(const Movie& m) {
     const char* sql =
-        "INSERT INTO movies (title,imdb_id,status,notes) VALUES (?,?,?,?);";
+        "INSERT INTO movies "
+        "(title,imdb_id,release_date,thumbnail_url,status,notes,tmdb_id) "
+        "VALUES (?,?,?,?,?,?,?);";
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-    sqlite3_bind_text(stmt, 1, m.title.c_str(),   -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 2, m.imdb_id.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int (stmt, 3, static_cast<int>(m.status));
-    sqlite3_bind_text(stmt, 4, m.notes.c_str(),   -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 1, m.title.c_str(),         -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, m.imdb_id.c_str(),       -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, m.release_date.c_str(),  -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, m.thumbnail_url.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int (stmt, 5, static_cast<int>(m.status));
+    sqlite3_bind_text(stmt, 6, m.notes.c_str(),         -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int (stmt, 7, m.tmdb_id);
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     return static_cast<int>(sqlite3_last_insert_rowid(db_));
@@ -209,14 +252,18 @@ int Database::add_movie(const Movie& m) {
 
 void Database::update_movie(const Movie& m) {
     const char* sql =
-        "UPDATE movies SET title=?,imdb_id=?,status=?,notes=? WHERE id=?;";
+        "UPDATE movies SET title=?,imdb_id=?,release_date=?,thumbnail_url=?,"
+        "status=?,notes=?,tmdb_id=? WHERE id=?;";
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-    sqlite3_bind_text(stmt, 1, m.title.c_str(),   -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 2, m.imdb_id.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int (stmt, 3, static_cast<int>(m.status));
-    sqlite3_bind_text(stmt, 4, m.notes.c_str(),   -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int (stmt, 5, m.id);
+    sqlite3_bind_text(stmt, 1, m.title.c_str(),         -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, m.imdb_id.c_str(),       -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, m.release_date.c_str(),  -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, m.thumbnail_url.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int (stmt, 5, static_cast<int>(m.status));
+    sqlite3_bind_text(stmt, 6, m.notes.c_str(),         -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int (stmt, 7, m.tmdb_id);
+    sqlite3_bind_int (stmt, 8, m.id);
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
 }
@@ -230,6 +277,48 @@ void Database::delete_movie(int id) {
     sqlite3_finalize(stmt);
 }
 
+// ---------- Episode watches -----------------------------------------------
+
+std::set<int> Database::get_watched_episodes(int show_id, int season) {
+    const char* sql =
+        "SELECT episode FROM episode_watches WHERE show_id=? AND season=?;";
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, show_id);
+    sqlite3_bind_int(stmt, 2, season);
+    std::set<int> result;
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+        result.insert(sqlite3_column_int(stmt, 0));
+    sqlite3_finalize(stmt);
+    return result;
+}
+
+std::map<int,int> Database::get_watched_counts(int show_id) {
+    const char* sql =
+        "SELECT season, COUNT(*) FROM episode_watches WHERE show_id=? GROUP BY season;";
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, show_id);
+    std::map<int,int> result;
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+        result[sqlite3_column_int(stmt, 0)] = sqlite3_column_int(stmt, 1);
+    sqlite3_finalize(stmt);
+    return result;
+}
+
+void Database::set_episode_watched(int show_id, int season, int episode, bool watched) {
+    const char* sql = watched
+        ? "INSERT OR IGNORE INTO episode_watches (show_id,season,episode) VALUES (?,?,?);"
+        : "DELETE FROM episode_watches WHERE show_id=? AND season=? AND episode=?;";
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, show_id);
+    sqlite3_bind_int(stmt, 2, season);
+    sqlite3_bind_int(stmt, 3, episode);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
 } // namespace FlickImp
 
-// SN: 00001
+// SN: 00002

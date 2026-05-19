@@ -61,7 +61,7 @@ manpages=$(scan man1/*.1    2>/dev/null || true)
 # Markdown docs — only include files that exist
 md_files=()
 for f in ROADMAP.md CHANGELOG.md Session_Log.md CLAUDE.md README.md \
-          watching_project_brief.md; do
+          PROJECT_project_brief.md; do
     [ -f "$f" ] && md_files+=("$f")
 done
 docs_md=$(scan "${md_files[@]}" 2>/dev/null || true)

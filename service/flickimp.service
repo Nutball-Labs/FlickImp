@@ -1,0 +1,22 @@
+[Unit]
+Description=FlickImp — self-hosted watchlist tracker
+Documentation=https://github.com/Nutball-Labs/FlickImp
+After=network.target
+
+[Service]
+Type=simple
+User=flickimp
+Group=flickimp
+
+# All configuration is read from /etc/flickimp/fi_config.json at startup.
+ExecStart=/usr/bin/flickimp
+
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+
+# SN: 00002

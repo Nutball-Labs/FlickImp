@@ -3,6 +3,8 @@
 #pragma once
 #include "models.hpp"
 #include <sqlite3.h>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 #include <stdexcept>
@@ -28,6 +30,11 @@ public:
     void              update_show(const Show& s);
     void              delete_show(int id);
 
+    // Episode watches
+    std::set<int>    get_watched_episodes(int show_id, int season);
+    std::map<int,int> get_watched_counts(int show_id);   // season → watched episode count
+    void              set_episode_watched(int show_id, int season, int episode, bool watched);
+
     // Movies
     std::vector<Movie> all_movies();
     Movie              get_movie(int id);
@@ -47,4 +54,4 @@ private:
 
 } // namespace FlickImp
 
-// SN: 00001
+// SN: 00002

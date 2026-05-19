@@ -13,6 +13,12 @@
 
 <header>
   <h1>FlickImp</h1>
+  <div class="header-menu" id="header-menu">
+    <button class="btn-menu" onclick="toggleMenu()" aria-label="Menu">&#9776;</button>
+    <div class="menu-dropdown hidden" id="menu-dropdown">
+      <button class="menu-item" onclick="openCheckModal()">Check All</button>
+    </div>
+  </div>
 </header>
 
 <main>
@@ -31,26 +37,41 @@
     <div id="add-show-form" class="add-form hidden">
       <h3>Add Show</h3>
       <div class="form-grid">
-        <input class="span2" type="text" id="new-show-title"
-               placeholder="Title" autocomplete="off">
-        <input type="text" id="new-show-service"
-               placeholder="Service" list="services-list" autocomplete="off">
-        <datalist id="services-list">
-          <option value="Netflix">
-          <option value="HBO Max">
-          <option value="Disney+">
-          <option value="Prime Video">
-          <option value="Apple TV+">
-          <option value="Peacock">
-          <option value="Hulu">
-          <option value="Paramount+">
-        </datalist>
-        <input type="text" id="new-show-imdb"
-               placeholder="IMDB ID (optional)" autocomplete="off">
-        <input type="number" id="new-show-season"
-               placeholder="Season" min="1" value="1" inputmode="numeric">
-        <input type="number" id="new-show-episode"
-               placeholder="Episode" min="1" value="1" inputmode="numeric">
+        <div class="field span2">
+          <label for="new-show-title">Title</label>
+          <div class="search-field-row">
+            <input type="text" id="new-show-title" autocomplete="off"
+                   placeholder="Type title then Search TMDB…"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();searchShows();}">
+            <button class="btn-search" type="button" onclick="searchShows()">Search TMDB</button>
+          </div>
+          <div id="show-search-results" class="search-results hidden"></div>
+        </div>
+        <div class="field">
+          <label for="new-show-service">Service</label>
+          <input type="text" id="new-show-service"
+                 list="services-list" autocomplete="off">
+          <datalist id="services-list">
+            <option value="Netflix">
+            <option value="HBO Max">
+            <option value="Disney+">
+            <option value="Prime Video">
+            <option value="Apple TV+">
+            <option value="Peacock">
+            <option value="Hulu">
+            <option value="Paramount+">
+          </datalist>
+        </div>
+        <div class="field">
+          <label for="new-show-imdb">IMDB Link</label>
+          <input type="text" id="new-show-imdb"
+                 placeholder="e.g. tt0903747" autocomplete="off">
+        </div>
+        <div class="field span2">
+          <label for="new-show-ep">Last Season / Episode Watched</label>
+          <input type="text" id="new-show-ep"
+                 placeholder="s001-e001" autocomplete="off">
+        </div>
       </div>
       <div class="form-actions">
         <button class="btn-primary" onclick="addShow()">Add</button>
@@ -73,12 +94,26 @@
     <div id="add-movie-form" class="add-form hidden">
       <h3>Add Movie</h3>
       <div class="form-grid">
-        <input class="span2" type="text" id="new-movie-title"
-               placeholder="Title" autocomplete="off">
-        <input type="text" id="new-movie-imdb"
-               placeholder="IMDB ID (optional)" autocomplete="off">
-        <input type="text" id="new-movie-notes"
-               placeholder="Notes (e.g. releasing Q3)" autocomplete="off">
+        <div class="field span2">
+          <label for="new-movie-title">Title</label>
+          <div class="search-field-row">
+            <input type="text" id="new-movie-title" autocomplete="off"
+                   placeholder="Type title then Search TMDB…"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();searchMovies();}">
+            <button class="btn-search" type="button" onclick="searchMovies()">Search TMDB</button>
+          </div>
+          <div id="movie-search-results" class="search-results hidden"></div>
+        </div>
+        <div class="field">
+          <label for="new-movie-imdb">IMDB Link</label>
+          <input type="text" id="new-movie-imdb"
+                 placeholder="e.g. tt0903747" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="new-movie-notes">Notes</label>
+          <input type="text" id="new-movie-notes"
+                 placeholder="e.g. releasing Q3" autocomplete="off">
+        </div>
       </div>
       <div class="form-actions">
         <button class="btn-primary" onclick="addMovie()">Add</button>
@@ -89,6 +124,35 @@
 
 </main>
 
+<!-- ===== Season / episode picker modal ===== -->
+<div class="modal-overlay hidden" id="ep-modal" onclick="modalOverlayClick(event)">
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <div class="modal-title" id="ep-modal-title"></div>
+      <button class="modal-close" onclick="closeWatchedPopup()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="seasons-pane" id="ep-seasons-pane"></div>
+      <div class="episodes-pane" id="ep-episodes-pane"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Check All modal ===== -->
+<div class="modal-overlay hidden" id="check-modal" onclick="checkModalOverlayClick(event)">
+  <div class="modal-dialog check-modal-dialog">
+    <div class="modal-header">
+      <div class="modal-title">Check All Shows &amp; Movies</div>
+      <span id="check-status" class="check-status"></span>
+      <button class="modal-close" onclick="closeCheckModal()">&#x2715;</button>
+    </div>
+    <div class="check-log-body">
+      <pre class="check-log" id="check-log"></pre>
+    </div>
+  </div>
+</div>
+
 <script src="app.js"></script>
 </body>
 </html>
+<!-- SN: 00003 -->

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Nutball Labs / Stephen Berg
 #include "server.hpp"
+#include "../lib/config.hpp"
 #include "../lib/database.hpp"
 #include "../lib/models.hpp"
 #include "../lib/platform.hpp"
@@ -9,6 +10,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <chrono>
@@ -17,8 +19,8 @@ namespace fs = std::filesystem;
 
 static std::string ep_label(int season, int episode) {
     std::ostringstream ss;
-    ss << "S" << std::setw(2) << std::setfill('0') << season
-       << "E" << std::setw(2) << std::setfill('0') << episode;
+    ss << "s" << std::setw(3) << std::setfill('0') << season
+       << "-e" << std::setw(3) << std::setfill('0') << episode;
     return ss.str();
 }
 
@@ -57,11 +59,21 @@ static int run_check(const std::string& db_path) {
         }
         ++checked;
 
-        // Opportunistically update total_episodes in the DB
+        // Opportunistically update cached fields in the DB
+        bool changed = false;
+        if (show.tmdb_id == 0 && info->tmdb_id > 0) {
+            show.tmdb_id = info->tmdb_id;
+            changed = true;
+        }
         if (info->total_episodes > 0 && info->total_episodes != show.total_episodes) {
             show.total_episodes = info->total_episodes;
-            db.update_show(show);
+            changed = true;
         }
+        if (show.thumbnail_url.empty() && !info->image_url.empty()) {
+            show.thumbnail_url = info->image_url;
+            changed = true;
+        }
+        if (changed) db.update_show(show);
 
         const auto& la = info->latest_aired;
         if (la.season == 0) {
@@ -93,9 +105,14 @@ static int run_check(const std::string& db_path) {
 }
 
 int main(int argc, char* argv[]) {
-    int port = 8647;
-    std::string web_root;
+    // Config file provides defaults; command-line args override
+    auto cfg = FlickImp::load_config();
+    int port = cfg.port;
+    std::string web_root = cfg.fi_web_root;
     bool check_mode = false;
+
+    // Initialise TMDB scraper (must happen before any Scraper:: calls)
+    FlickImp::Scraper::init(cfg.tmdb_api_key, cfg.tmdb_bearer_token);
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -119,9 +136,13 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    std::string db_path = cfg.fi_db_path.empty()
+        ? FlickImp::Platform::db_path()
+        : cfg.fi_db_path + "/flickimp.db";
+
     if (check_mode) {
         try {
-            return run_check(FlickImp::Platform::db_path());
+            return run_check(db_path);
         } catch (const std::exception& e) {
             std::cerr << "Error: " << e.what() << "\n";
             return 1;
@@ -130,18 +151,20 @@ int main(int argc, char* argv[]) {
 
     // Normal mode: start the HTTP server
     if (web_root.empty()) {
+        // 1. Next to the binary (dev / in-place run from build dir)
         std::string bin_dir = fs::weakly_canonical(fs::path(argv[0])).parent_path().string();
         if (fs::exists(bin_dir + "/web"))
             web_root = bin_dir + "/web";
+        // 2. Platform data dir — /var/lib/flickimp/web (system) or XDG (dev user)
         else
             web_root = FlickImp::Platform::data_dir() + "/web";
     }
 
     try {
-        FlickImp::Server srv(FlickImp::Platform::db_path(), web_root, port);
+        FlickImp::Server srv(db_path, web_root, port);
         std::cout << "FlickImp " APP_VERSION
                   << " — http://localhost:" << port << "\n"
-                  << "  DB:  " << FlickImp::Platform::db_path() << "\n"
+                  << "  DB:  " << db_path << "\n"
                   << "  Web: " << web_root << "\n"
                   << "  Press Ctrl+C to stop.\n";
         srv.run();
@@ -153,4 +176,4 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
-// SN: 00001
+// SN: 00003
