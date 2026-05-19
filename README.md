@@ -1,5 +1,7 @@
 # FlickImp
 
+![FlickImp](images/FlickImp2.png)
+
 A self-hosted web app for tracking the TV shows and movies you're watching — where you left off, what season and episode you're on, and how many episodes are left.
 
 FlickImp is for people who watch across multiple streaming services and want a single private list they actually control. It runs as a lightweight HTTP daemon on your local machine or home server, serves a browser-based UI, and pulls episode data from IMDB so you always know how far you are through a series.
@@ -94,4 +96,4 @@ feature decisions, and real-world testing are entirely human-driven.
 GNU General Public License v3 — see [LICENSE](LICENSE).
 Copyright (C) 2026 Nutball Labs / Stephen Berg
 
-<!-- SN: 00001 -->
+<!-- SN: 00002 -->
