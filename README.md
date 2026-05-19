@@ -82,7 +82,7 @@ Configuration is read from `/etc/flickimp/fi_config.json` when running as a syst
 
 FlickImp is built the same way as its sister projects
 [TagGoblin](https://github.com/Nutball-Labs/TagGoblin) and
-[PathMux](https://github.com/Nutball-Labs/PathMux) — a collaboration between
+[CamClops](https://github.com/Nutball-Labs/CamClops) — a collaboration between
 an experienced Linux sysadmin and Claude (Anthropic's AI), which handles the
 C++ implementation under continuous human guidance and review. The architecture,
 feature decisions, and real-world testing are entirely human-driven.
