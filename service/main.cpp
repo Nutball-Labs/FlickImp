@@ -73,16 +73,25 @@ static int run_check(const std::string& db_path) {
             show.thumbnail_url = info->image_url;
             changed = true;
         }
-        if (changed) db.update_show(show);
 
         const auto& la = info->latest_aired;
         if (la.season == 0) {
+            if (changed) db.update_show(show);
             std::cout << " no aired-episode data found\n";
             continue;
         }
 
         bool ahead = (la.season > show.season) ||
                      (la.season == show.season && la.episode > show.episode);
+
+        int new_ls = ahead ? la.season   : 0;
+        int new_le = ahead ? la.episode  : 0;
+        if (show.latest_season != new_ls || show.latest_episode != new_le) {
+            show.latest_season  = new_ls;
+            show.latest_episode = new_le;
+            changed = true;
+        }
+        if (changed) db.update_show(show);
 
         if (ahead) {
             ++found_new;

@@ -12,21 +12,22 @@
 <body>
 
 <header>
-  <h1>FlickImp</h1>
+  <h1 id="site-title" onclick="titleClick()">FlickImp</h1>
   <div class="header-menu" id="header-menu">
     <button class="btn-menu" onclick="toggleMenu()" aria-label="Menu">&#9776;</button>
     <div class="menu-dropdown hidden" id="menu-dropdown">
       <button class="menu-item" onclick="openCheckModal()">Check All</button>
+      <button class="menu-item" onclick="openAboutModal()">About</button>
     </div>
   </div>
 </header>
 
-<main>
+<main id="main-view">
 
   <!-- ===== Shows ===== -->
   <section id="shows-section">
     <div class="section-header">
-      <h2>Now FlickImp</h2>
+      <h2>Shows</h2>
       <button class="btn-add" onclick="showAddShowForm()">+ Show</button>
     </div>
 
@@ -34,8 +35,72 @@
       <div class="empty">Loading...</div>
     </div>
 
-    <div id="add-show-form" class="add-form hidden">
-      <h3>Add Show</h3>
+  </section>
+
+  <!-- ===== Movies ===== -->
+  <section id="movies-section">
+    <div class="section-header">
+      <h2>Movies</h2>
+      <button class="btn-add" onclick="showAddMovieForm()">+ Movie</button>
+    </div>
+
+    <div id="movies-list" class="card-list">
+      <div class="empty">Loading...</div>
+    </div>
+
+  </section>
+
+</main>
+
+<!-- ===== Episode browser view ===== -->
+<div id="episode-view" class="hidden">
+  <div class="ev-header">
+    <h2 id="ev-title"></h2>
+  </div>
+  <div class="ev-body">
+    <div class="ev-seasons-pane" id="ev-seasons-pane"></div>
+    <div class="ev-episodes-pane" id="ev-episodes-pane">
+      <div class="empty">Select a season</div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Season / episode picker modal ===== -->
+<div class="modal-overlay hidden" id="ep-modal" onclick="modalOverlayClick(event)">
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <div class="modal-title" id="ep-modal-title"></div>
+      <button class="modal-close" onclick="closeWatchedPopup()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="seasons-pane" id="ep-seasons-pane"></div>
+      <div class="episodes-pane" id="ep-episodes-pane"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Check All modal ===== -->
+<div class="modal-overlay hidden" id="check-modal" onclick="checkModalOverlayClick(event)">
+  <div class="modal-dialog check-modal-dialog">
+    <div class="modal-header">
+      <div class="modal-title">Check All Shows &amp; Movies</div>
+      <span id="check-status" class="check-status"></span>
+      <button class="modal-close" onclick="closeCheckModal()">&#x2715;</button>
+    </div>
+    <div class="check-log-body">
+      <pre class="check-log" id="check-log"></pre>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Add Show modal ===== -->
+<div class="modal-overlay hidden" id="add-show-modal" onclick="addShowModalClick(event)">
+  <div class="modal-dialog add-modal-dialog">
+    <div class="modal-header">
+      <div class="modal-title">Add Show</div>
+      <button class="modal-close" onclick="hideAddShowForm()">&#x2715;</button>
+    </div>
+    <div class="modal-form-body">
       <div class="form-grid">
         <div class="field span2">
           <label for="new-show-title">Title</label>
@@ -70,7 +135,7 @@
         <div class="field span2">
           <label for="new-show-ep">Last Season / Episode Watched</label>
           <input type="text" id="new-show-ep"
-                 placeholder="s001-e001" autocomplete="off">
+                 placeholder="leave blank = not started" autocomplete="off">
         </div>
       </div>
       <div class="form-actions">
@@ -78,21 +143,17 @@
         <button class="btn-cancel"  onclick="hideAddShowForm()">Cancel</button>
       </div>
     </div>
-  </section>
+  </div>
+</div>
 
-  <!-- ===== Movies ===== -->
-  <section id="movies-section">
-    <div class="section-header">
-      <h2>Movies Watchlist</h2>
-      <button class="btn-add" onclick="showAddMovieForm()">+ Movie</button>
+<!-- ===== Add Movie modal ===== -->
+<div class="modal-overlay hidden" id="add-movie-modal" onclick="addMovieModalClick(event)">
+  <div class="modal-dialog add-modal-dialog">
+    <div class="modal-header">
+      <div class="modal-title">Add Movie</div>
+      <button class="modal-close" onclick="hideAddMovieForm()">&#x2715;</button>
     </div>
-
-    <div id="movies-list" class="card-list">
-      <div class="empty">Loading...</div>
-    </div>
-
-    <div id="add-movie-form" class="add-form hidden">
-      <h3>Add Movie</h3>
+    <div class="modal-form-body">
       <div class="form-grid">
         <div class="field span2">
           <label for="new-movie-title">Title</label>
@@ -120,39 +181,42 @@
         <button class="btn-cancel"  onclick="hideAddMovieForm()">Cancel</button>
       </div>
     </div>
-  </section>
+  </div>
+</div>
 
-</main>
-
-<!-- ===== Season / episode picker modal ===== -->
-<div class="modal-overlay hidden" id="ep-modal" onclick="modalOverlayClick(event)">
-  <div class="modal-dialog">
+<!-- ===== Cast modal ===== -->
+<div class="modal-overlay hidden" id="cast-modal" onclick="castModalClick(event)">
+  <div class="modal-dialog cast-modal-dialog">
     <div class="modal-header">
-      <div class="modal-title" id="ep-modal-title"></div>
-      <button class="modal-close" onclick="closeWatchedPopup()">✕</button>
+      <div class="modal-title" id="cast-modal-title">Cast</div>
+      <button class="modal-close" onclick="closeCastModal()">&#x2715;</button>
     </div>
-    <div class="modal-body">
-      <div class="seasons-pane" id="ep-seasons-pane"></div>
-      <div class="episodes-pane" id="ep-episodes-pane"></div>
+    <div class="cast-modal-body" id="cast-modal-body">
+      <div class="empty">Loading…</div>
     </div>
   </div>
 </div>
 
-<!-- ===== Check All modal ===== -->
-<div class="modal-overlay hidden" id="check-modal" onclick="checkModalOverlayClick(event)">
-  <div class="modal-dialog check-modal-dialog">
+<!-- ===== About modal ===== -->
+<div class="modal-overlay hidden" id="about-modal" onclick="aboutModalOverlayClick(event)">
+  <div class="modal-dialog about-modal-dialog">
     <div class="modal-header">
-      <div class="modal-title">Check All Shows &amp; Movies</div>
-      <span id="check-status" class="check-status"></span>
-      <button class="modal-close" onclick="closeCheckModal()">&#x2715;</button>
+      <div class="modal-title">About FlickImp</div>
+      <button class="modal-close" onclick="closeAboutModal()">&#x2715;</button>
     </div>
-    <div class="check-log-body">
-      <pre class="check-log" id="check-log"></pre>
+    <div class="about-modal-body" id="about-modal-body">
+      <div class="empty">Loading…</div>
     </div>
   </div>
+</div>
+
+<!-- ===== Episode link popup ===== -->
+<div id="ep-link-popup" class="ep-link-popup hidden">
+  <a id="ep-link-tmdb" href="#" target="_blank" rel="noopener" class="ep-link-btn tmdb-btn">TMDB</a>
+  <a id="ep-link-imdb" href="#" target="_blank" rel="noopener" class="ep-link-btn imdb-btn">IMDB</a>
 </div>
 
 <script src="app.js"></script>
 </body>
 </html>
-<!-- SN: 00003 -->
+<!-- SN: 00004 -->

@@ -37,9 +37,9 @@ Target OS: Alma Linux 9.x (RHEL 9 based). System-service deployment with a dedic
 |---|---|
 | `lib/version.hpp` | Version macros; `APP_NAME`, `APP_VERSION`, license notice |
 | `lib/flickimp.hpp` | Umbrella header |
-| `lib/models.hpp` | POD structs: `Show`, `Movie`; `ShowStatus`, `MovieStatus` enums; both carry `tmdb_id` |
-| `lib/database.cpp/.hpp` | SQLite CRUD for shows, movies, episode watches; `get_watched_counts()` for season colour coding |
-| `lib/scraper.cpp/.hpp` | TMDB REST API (primary): `fetch_show_info()`, `fetch_show_seasons()`, `fetch_season_episodes()`, `fetch_movie_info()`, `fetch_movie_info_by_tmdb_id()`; IMDB ID reverse-lookup: `fetch_imdb_id()` (TV), `fetch_movie_imdb_id()` (movie); search: `search_shows()`, `search_movies()`; IMDB scraping via `--check` (secondary) |
+| `lib/models.hpp` | POD structs: `Show`, `Movie`, `CastMember`; `ShowStatus`, `MovieStatus` enums; `Show` carries `tmdb_id`, `latest_season`, `latest_episode`, `season_episodes`, `next_season`, `next_episode`, `next_episode_title` |
+| `lib/database.cpp/.hpp` | SQLite CRUD for shows, movies, episode watches, people cache, show/movie/episode cast tables, `episode_imdb_ids` cache; `compute_next_unwatched()`, `max_watched_position()`, `episode_imdb_cached()`, `cache_episode_imdb()`, `get_episode_imdb_id()` |
+| `lib/scraper.cpp/.hpp` | TMDB REST API: show/movie/episode cast fetch; `fetch_person_imdb_id`, `fetch_episode_imdb_id`, `fetch_episode_title`; show/movie/season/episode fetch functions |
 
 ### Service (`service/`) — compiled into `flickimp` binary (HTTP daemon)
 
@@ -55,14 +55,15 @@ Target OS: Alma Linux 9.x (RHEL 9 based). System-service deployment with a dedic
 |---|---|
 | `gui/main.cpp` | Qt application entry point |
 | `gui/MainWindow.h/.cpp` | Service control (start/stop/restart/boot); port; TMDB API Key + Bearer Token |
+| `gui/resources.qrc` | Qt resource bundle — embeds `FlickImp_icon.png` for the identity header |
 
 ### Web frontend (`web/`) — static assets served by the daemon
 
 | File | Role |
 |---|---|
-| `web/index.html` | Single-page app shell; includes season/episode picker modal markup |
-| `web/style.css` | Dark theme; modal overlay, season colour-coding, episode grid |
-| `web/app.js` | Vanilla JS — show/movie cards; "Last watched / Next watch" display; popup modal with season picker and episode checkboxes; ☰ menu; Check All log modal (SSE) |
+| `web/index.html` | Single-page app shell; modals: episode picker, Check All, Add Show, Add Movie, Cast, episode browser view |
+| `web/style.css` | Dark theme; semi-transparent cards; dual watermarks; episode browser layout; cast modal; modal overlays |
+| `web/app.js` | Show/movie cards; episode browser view (click title); cast modal; "Last watched / Next:" display; picker modal; ☰ Check All SSE |
 
 ### Third-party (vendored, not committed)
 
@@ -79,7 +80,7 @@ Target OS: Alma Linux 9.x (RHEL 9 based). System-service deployment with a dedic
 - **Config format: JSON** — `fi_config.json`; human-editable; no INI/TOML/YAML
 - **Config location: `/etc/flickimp/fi_config.json`** — system service; Qt app writes via pkexec; dev user falls back to XDG path
 - **Single config file** — port, web_root, and TMDB credentials all in `fi_config.json`; no separate env file
-- **TMDB primary, IMDB secondary** — TMDB REST API for season/episode metadata; IMDB scraping only for `--check` new-episode detection
+- **TMDB sole data source** — all episode/movie data from TMDB REST API; IMDB IDs used as lookup keys only; no IMDB HTML scraping
 - **`fi_` file naming convention** — all FlickImp config files and CLI artifacts prefixed `fi_` (e.g. `fi_config.json`)
 
 ---
@@ -93,15 +94,19 @@ Target OS: Alma Linux 9.x (RHEL 9 based). System-service deployment with a dedic
 | PUT | `/api/shows/:id` | Update show fields |
 | DELETE | `/api/shows/:id` | Remove a show |
 | GET | `/api/shows/:id/seasons` | Season list with episode count and watched count per season |
-| GET | `/api/shows/:id/episodes?season=N` | Episode list for a season (from TMDB, merged with local watched state) |
-| PUT | `/api/shows/:id/episodes/:s/:e/watched` | Mark episode watched/unwatched; auto-advances last-watched position |
+| GET | `/api/shows/:id/episodes?season=N` | Episode list for a season (from TMDB, merged with local watched state); includes per-episode `imdb_id` (cached in `episode_imdb_ids`) and `episode_url` (TMDB link) |
+| PUT | `/api/shows/:id/episodes/:s/:e/watched` | Mark episode watched/unwatched; sets position to checked episode; recalculates `next_season`/`next_episode`/`next_episode_title` |
+| GET | `/api/shows/:id/cast` | Cast list for a show (cached in DB after first fetch) |
+| GET | `/api/shows/:id/episodes/:s/:e/cast` | Episode-specific cast including guest stars (cached) |
 | GET | `/api/movies` | List all movies |
 | POST | `/api/movies` | Add a movie (stores tmdb_id; back-fills imdb_id + release_date from TMDB) |
 | PUT | `/api/movies/:id` | Update movie |
 | DELETE | `/api/movies/:id` | Remove a movie |
+| GET | `/api/movies/:id/cast` | Cast list for a movie (cached) |
 | GET | `/api/search/shows?q=` | Search TMDB for TV shows; returns up to 5 results |
 | GET | `/api/search/movies?q=` | Search TMDB for movies; returns up to 5 results |
 | GET | `/api/check/stream` | SSE stream: check all active shows for new episodes + back-fill missing movie release dates; fires `event: done` on completion |
+| GET | `/api/about` | App metadata: name, version, copyright, license, repo URL; version read from `version.hpp` at compile time |
 
 ---
 
@@ -110,9 +115,9 @@ Target OS: Alma Linux 9.x (RHEL 9 based). System-service deployment with a dedic
 Every source file carries a serial number at the bottom:
 - `// SN: 00002` — C++ files and headers
 - `# SN: 00002` — cmake files and shell scripts
-- `<!-- SN: 00002 -->` — Markdown files
+- `<!-- SN: 00004 -->` — Markdown files
 
-HWM is currently `00002`. Bump on change; increment HWM on each release.
+HWM is currently `00004`. Bump on change; increment HWM on each release.
 Run: `cmake --build build-linux --target sn-audit` to audit.
 
 ---
@@ -153,6 +158,6 @@ Commit format: `"Fix/Add/Update description — FlickImp vX.Y.Z (SN NNNNN)"`
 
 ## Current Status
 
-Version 0.2.1a — building. HTTP daemon, web UI, TMDB integration, and Qt configurator are all functional.
+Version 1.0.0 — initial public release. All core features functional: daemon, web UI, episode browser, episode/movie TMDB+IMDB link popups, cast, next-episode title on cards, responsive multi-column layout, About modal, TMDB integration, Qt6 configurator. macOS and Windows builds pending.
 
-<!-- SN: 00002 -->
+<!-- SN: 00004 -->

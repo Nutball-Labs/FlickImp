@@ -4,6 +4,7 @@
 #include "../lib/database.hpp"
 #include "../lib/models.hpp"
 #include "../lib/scraper.hpp"
+#include "../lib/version.hpp"
 #include <httplib.h>
 #include <json.hpp>
 #include <chrono>
@@ -50,7 +51,13 @@ static json show_to_json(const Show& s) {
         {"episode",        s.episode},
         {"imdb_id",        s.imdb_id},
         {"tmdb_id",        s.tmdb_id},
-        {"total_episodes", s.total_episodes},
+        {"total_episodes",  s.total_episodes},
+        {"latest_season",   s.latest_season},
+        {"latest_episode",  s.latest_episode},
+        {"season_episodes", s.season_episodes},
+        {"next_season",         s.next_season},
+        {"next_episode",        s.next_episode},
+        {"next_episode_title",  s.next_episode_title},
         {"status",         status_str[static_cast<int>(s.status)]},
         {"notes",          s.notes},
         {"thumbnail_url",  s.thumbnail_url},
@@ -63,6 +70,7 @@ static json movie_to_json(const Movie& m) {
         {"id",            m.id},
         {"title",         m.title},
         {"imdb_id",       m.imdb_id},
+        {"tmdb_id",       m.tmdb_id},
         {"release_date",  m.release_date},
         {"thumbnail_url", m.thumbnail_url},
         {"status",        status_str[static_cast<int>(m.status)]},
@@ -79,6 +87,16 @@ static ShowStatus show_status_from(const std::string& s) {
 static MovieStatus movie_status_from(const std::string& s) {
     if (s == "watched") return MovieStatus::Watched;
     return MovieStatus::WantToWatch;
+}
+
+static json cast_member_to_json(const CastMember& cm) {
+    return {
+        {"name",           cm.name},
+        {"character",      cm.character},
+        {"imdb_id",        cm.imdb_id},
+        {"profile_url",    cm.profile_url},
+        {"tmdb_person_id", cm.tmdb_person_id}
+    };
 }
 
 static json search_result_to_json(const Scraper::SearchResult& r) {
@@ -124,11 +142,30 @@ Server::Server(const std::string& db_path, const std::string& web_root, int port
     if (!srv.set_mount_point("/", web_root))
         throw std::runtime_error("Web root not found or inaccessible: " + web_root);
 
+    // --- GET /api/about ---------------------------------------------------
+    srv.Get("/api/about", [](const httplib::Request&, httplib::Response& res) {
+        json_response(res, {
+            {"name",      APP_NAME},
+            {"version",   APP_VERSION},
+            {"copyright", "Copyright © 2026 Nutball Labs / Stephen Berg"},
+            {"license",   "GNU General Public License v3 or later"},
+            {"repo",      "https://github.com/Nutball-Labs/FlickImp"}
+        });
+    });
+
     // --- GET /api/shows ---------------------------------------------------
     srv.Get("/api/shows", [&](const httplib::Request&, httplib::Response& res) {
         try {
             json arr = json::array();
-            for (const auto& s : db.all_shows()) arr.push_back(show_to_json(s));
+            for (auto s : db.all_shows()) {
+                // Backfill next_episode_title for shows that pre-date the field.
+                if (s.next_season > 0 && s.tmdb_id > 0 && s.next_episode_title.empty()) {
+                    s.next_episode_title =
+                        Scraper::fetch_episode_title(s.tmdb_id, s.next_season, s.next_episode);
+                    db.update_show(s);
+                }
+                arr.push_back(show_to_json(s));
+            }
             json_response(res, arr);
         } catch (const std::exception& e) {
             error_response(res, e.what(), 500);
@@ -209,7 +246,17 @@ Server::Server(const std::string& db_path, const std::string& web_root, int port
     srv.Get("/api/movies", [&](const httplib::Request&, httplib::Response& res) {
         try {
             json arr = json::array();
-            for (const auto& m : db.all_movies()) arr.push_back(movie_to_json(m));
+            for (auto m : db.all_movies()) {
+                // Backfill tmdb_id for movies added before it was tracked.
+                if (m.tmdb_id == 0 && !m.imdb_id.empty()) {
+                    auto info = Scraper::fetch_movie_info(m.imdb_id);
+                    if (info && info->tmdb_id > 0) {
+                        m.tmdb_id = info->tmdb_id;
+                        db.update_movie(m);
+                    }
+                }
+                arr.push_back(movie_to_json(m));
+            }
             json_response(res, arr);
         } catch (const std::exception& e) {
             error_response(res, e.what(), 500);
@@ -389,6 +436,13 @@ Server::Server(const std::string& db_path, const std::string& web_root, int port
 
             json arr = json::array();
             for (const auto& ep : entries) {
+                std::string ep_imdb;
+                if (db.episode_imdb_cached(show.tmdb_id, ep.season, ep.episode)) {
+                    ep_imdb = db.get_episode_imdb_id(show.tmdb_id, ep.season, ep.episode);
+                } else {
+                    ep_imdb = Scraper::fetch_episode_imdb_id(show.tmdb_id, ep.season, ep.episode);
+                    db.cache_episode_imdb(show.tmdb_id, ep.season, ep.episode, ep_imdb);
+                }
                 arr.push_back({
                     {"season",       ep.season},
                     {"episode",      ep.episode},
@@ -396,6 +450,7 @@ Server::Server(const std::string& db_path, const std::string& web_root, int port
                     {"episode_url",  ep.episode_url},
                     {"air_date",     ep.air_date},
                     {"watched",      watched.count(ep.episode) > 0},
+                    {"imdb_id",      ep_imdb},
                 });
             }
             json_response(res, arr);
@@ -415,19 +470,49 @@ Server::Server(const std::string& db_path, const std::string& web_root, int port
             int season  = std::stoi(req.matches[2]);
             int episode = std::stoi(req.matches[3]);
             auto j = json::parse(req.body);
-            bool watched = j.value("watched", true);
+            bool watched     = j.value("watched", true);
+            int season_total = j.value("season_total", 0);
 
             db.set_episode_watched(show_id, season, episode, watched);
 
             Show show = db.get_show(show_id);
+            bool changed = false;
             if (watched) {
-                if (season > show.season ||
-                    (season == show.season && episode > show.episode)) {
+                // Always set position to the episode just checked (last-watched semantics)
+                if (show.season != season || show.episode != episode) {
+                    if (show.season != season) show.season_episodes = 0;
                     show.season  = season;
                     show.episode = episode;
-                    db.update_show(show);
+                    changed = true;
+                }
+            } else {
+                // Only recalculate if we unchecked the current position episode
+                if (season == show.season && episode == show.episode) {
+                    auto [max_s, max_e] = db.max_watched_position(show_id);
+                    if (show.season != max_s || show.episode != max_e) {
+                        if (show.season != max_s) show.season_episodes = 0;
+                        show.season  = max_s;
+                        show.episode = max_e;
+                        changed = true;
+                    }
                 }
             }
+            if (season_total > 0 && season == show.season &&
+                    show.season_episodes != season_total) {
+                show.season_episodes = season_total;
+                changed = true;
+            }
+            // Recompute next unwatched after any position change
+            auto [ns, ne] = db.compute_next_unwatched(show_id, show.season, show.episode, show.season_episodes);
+            if (show.next_season != ns || show.next_episode != ne) {
+                show.next_season  = ns;
+                show.next_episode = ne;
+                show.next_episode_title = (ns > 0 && show.tmdb_id > 0)
+                    ? Scraper::fetch_episode_title(show.tmdb_id, ns, ne)
+                    : std::string{};
+                changed = true;
+            }
+            if (changed) db.update_show(show);
             json_response(res, {{"ok", true}, {"show", show_to_json(show)}});
         } catch (const DbError& e) {
             error_response(res, e.what(), 404);
@@ -487,15 +572,20 @@ Server::Server(const std::string& db_path, const std::string& web_root, int port
                             { show.total_episodes = info->total_episodes; changed = true; }
                         if (show.thumbnail_url.empty() && !info->image_url.empty())
                             { show.thumbnail_url = info->image_url; changed = true; }
-                        if (changed) db.update_show(show);
 
                         const auto& la = info->latest_aired;
                         if (la.season == 0) {
+                            if (changed) db.update_show(show);
                             send("    no aired-episode data found");
                             continue;
                         }
                         bool ahead = (la.season > show.season) ||
                                      (la.season == show.season && la.episode > show.episode);
+                        int new_ls = ahead ? la.season  : 0;
+                        int new_le = ahead ? la.episode : 0;
+                        if (show.latest_season != new_ls || show.latest_episode != new_le)
+                            { show.latest_season = new_ls; show.latest_episode = new_le; changed = true; }
+                        if (changed) db.update_show(show);
                         if (ahead) {
                             ++found_new;
                             std::string detail = "    You're on "
@@ -579,6 +669,93 @@ Server::Server(const std::string& db_path, const std::string& web_root, int port
             }
         );
     });
+
+    // --- GET /api/shows/:id/cast ------------------------------------------
+    // First call fetches from TMDB and caches in people + show_cast tables.
+    // Subsequent calls are served entirely from the DB.
+    srv.Get(R"(/api/shows/(\d+)/cast)", [&](const httplib::Request& req, httplib::Response& res) {
+        try {
+            int show_id = std::stoi(req.matches[1]);
+            Show show = db.get_show(show_id);
+            if (show.tmdb_id == 0) { json_response(res, json::array()); return; }
+            if (!db.show_cast_cached(show_id)) {
+                auto cast = Scraper::fetch_show_cast(show.tmdb_id);
+                for (auto& cm : cast) {
+                    if (!db.person_cached(cm.tmdb_person_id)) {
+                        cm.imdb_id = Scraper::fetch_person_imdb_id(cm.tmdb_person_id);
+                        db.upsert_person(cm.tmdb_person_id, cm.name, cm.imdb_id, cm.profile_url);
+                    } else {
+                        cm.imdb_id = db.get_person_imdb_id(cm.tmdb_person_id);
+                    }
+                }
+                db.store_show_cast(show_id, cast);
+            }
+            json arr = json::array();
+            for (const auto& cm : db.get_show_cast(show_id))
+                arr.push_back(cast_member_to_json(cm));
+            json_response(res, arr);
+        } catch (const std::exception& e) { error_response(res, e.what(), 500); }
+    });
+
+    // --- GET /api/shows/:id/episodes/:season/:episode/cast ----------------
+    srv.Get(R"(/api/shows/(\d+)/episodes/(\d+)/(\d+)/cast)",
+        [&](const httplib::Request& req, httplib::Response& res) {
+        try {
+            int show_id = std::stoi(req.matches[1]);
+            int season  = std::stoi(req.matches[2]);
+            int episode = std::stoi(req.matches[3]);
+            Show show = db.get_show(show_id);
+            if (show.tmdb_id == 0) { json_response(res, json::array()); return; }
+            if (!db.episode_cast_cached(show_id, season, episode)) {
+                auto cast = Scraper::fetch_episode_cast(show.tmdb_id, season, episode);
+                for (auto& cm : cast) {
+                    if (!db.person_cached(cm.tmdb_person_id)) {
+                        cm.imdb_id = Scraper::fetch_person_imdb_id(cm.tmdb_person_id);
+                        db.upsert_person(cm.tmdb_person_id, cm.name, cm.imdb_id, cm.profile_url);
+                    } else {
+                        cm.imdb_id = db.get_person_imdb_id(cm.tmdb_person_id);
+                    }
+                }
+                db.store_episode_cast(show_id, season, episode, cast);
+            }
+            json arr = json::array();
+            for (const auto& cm : db.get_episode_cast(show_id, season, episode))
+                arr.push_back(cast_member_to_json(cm));
+            json_response(res, arr);
+        } catch (const std::exception& e) { error_response(res, e.what(), 500); }
+    });
+
+    // --- GET /api/movies/:id/cast -----------------------------------------
+    srv.Get(R"(/api/movies/(\d+)/cast)", [&](const httplib::Request& req, httplib::Response& res) {
+        try {
+            int movie_id = std::stoi(req.matches[1]);
+            Movie movie = db.get_movie(movie_id);
+            if (movie.tmdb_id == 0 && !movie.imdb_id.empty()) {
+                auto info = Scraper::fetch_movie_info(movie.imdb_id);
+                if (info && info->tmdb_id > 0) {
+                    movie.tmdb_id = info->tmdb_id;
+                    db.update_movie(movie);
+                }
+            }
+            if (movie.tmdb_id == 0) { json_response(res, json::array()); return; }
+            if (!db.movie_cast_cached(movie_id)) {
+                auto cast = Scraper::fetch_movie_cast(movie.tmdb_id);
+                for (auto& cm : cast) {
+                    if (!db.person_cached(cm.tmdb_person_id)) {
+                        cm.imdb_id = Scraper::fetch_person_imdb_id(cm.tmdb_person_id);
+                        db.upsert_person(cm.tmdb_person_id, cm.name, cm.imdb_id, cm.profile_url);
+                    } else {
+                        cm.imdb_id = db.get_person_imdb_id(cm.tmdb_person_id);
+                    }
+                }
+                db.store_movie_cast(movie_id, cast);
+            }
+            json arr = json::array();
+            for (const auto& cm : db.get_movie_cast(movie_id))
+                arr.push_back(cast_member_to_json(cm));
+            json_response(res, arr);
+        } catch (const std::exception& e) { error_response(res, e.what(), 500); }
+    });
 }
 
 Server::~Server() {
@@ -600,4 +777,4 @@ void Server::run() {
 
 } // namespace FlickImp
 
-// SN: 00003
+// SN: 00004

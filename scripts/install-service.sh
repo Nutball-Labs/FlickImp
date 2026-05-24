@@ -39,23 +39,14 @@ if [[ ! -f "$CONFIG" ]]; then
   "tmdb_bearer_token": ""
 }
 EOF
-    chmod 640 "$CONFIG"
+    chmod 644 "$CONFIG"
     chown root:flickimp "$CONFIG"
     echo "  Created $CONFIG with defaults"
 else
-    cp "$CONFIG" "${CONFIG}.orig"
-    cat > "${CONFIG}.new" << 'EOF'
-{
-  "port": 8647,
-  "fi_db_path": "/var/lib/flickimp/db",
-  "fi_web_root": "",
-  "tmdb_api_key": "",
-  "tmdb_bearer_token": ""
-}
-EOF
-    chmod 640 "${CONFIG}.orig" "${CONFIG}.new"
-    chown root:flickimp "${CONFIG}.orig" "${CONFIG}.new"
-    echo "  Existing config preserved; backup → ${CONFIG}.orig, defaults → ${CONFIG}.new"
+    cp "$CONFIG" "${CONFIG}.bak"
+    chmod 644 "${CONFIG}.bak"
+    chown root:flickimp "${CONFIG}.bak"
+    echo "  Existing config preserved (backup → ${CONFIG}.bak)"
 fi
 
 echo "--- Installing service unit ---"

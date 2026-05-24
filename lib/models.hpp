@@ -17,6 +17,12 @@ struct Show {
     std::string imdb_id;          // e.g. "tt0903747" (optional)
     int        tmdb_id{0};        // TMDB show ID, cached after first lookup
     int        total_episodes{0};
+    int        latest_season{0};   // set by --check; 0 = unknown/caught up
+    int        latest_episode{0};
+    int        season_episodes{0}; // episode count for current season; 0 = unknown
+    int        next_season{0};    // first unwatched episode after position; 0 = use fallback
+    int        next_episode{0};
+    std::string next_episode_title;
     ShowStatus  status{ShowStatus::Watching};
     std::string notes;
     std::string thumbnail_url;
@@ -33,6 +39,15 @@ struct Movie {
     std::string notes;
 };
 
+struct CastMember {
+    int         tmdb_person_id{0};
+    std::string name;
+    std::string character;
+    std::string profile_url;
+    std::string imdb_id;       // populated from people cache; empty = unknown
+    int         sort_order{0};
+};
+
 } // namespace FlickImp
 
-// SN: 00001
+// SN: 00004

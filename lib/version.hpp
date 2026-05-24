@@ -4,11 +4,11 @@
 
 #define APP_NAME "FlickImp"
 
-#define VERSION_MAJOR  0
-#define VERSION_MINOR  3
-#define VERSION_PATCH  3
+#define VERSION_MAJOR  1
+#define VERSION_MINOR  0
+#define VERSION_PATCH  0
 #define VERSION_BUILD  0
-#define VERSION_SUFFIX "d"
+#define VERSION_SUFFIX ""
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)
@@ -37,4 +37,4 @@ static const char PROJECT_LICENSE_NOTICE[] __attribute__((used)) =
     "|\n"
     "|   ... Kali does NOT approve.\n";
 
-// SN: 00001
+// SN: 00004

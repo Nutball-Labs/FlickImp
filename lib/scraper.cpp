@@ -125,25 +125,33 @@ std::string year_from_date(const std::string& date) {
 // Returns 0 on failure.
 int find_tv_id(const std::string& imdb_id) {
     auto j = tmdb_get("/find/" + imdb_id, "external_source=imdb_id");
-    if (j.is_null()) return 0;
-    try {
-        auto& results = j["tv_results"];
-        if (results.is_array() && !results.empty())
-            return results[0].value("id", 0);
-    } catch (...) {}
-    return 0;
+    if (j.is_null()) {
+        std::cerr << "    [scraper] TMDB: request failed for " << imdb_id << "\n";
+        return 0;
+    }
+    if (!j.contains("tv_results")) {
+        std::cerr << "    [scraper] TMDB: unexpected response: " << j.dump() << "\n";
+        return 0;
+    }
+    auto& results = j["tv_results"];
+    if (!results.is_array() || results.empty()) return 0;
+    return results[0].value("id", 0);
 }
 
 // Find the TMDB ID for a movie given an IMDB ID.
 int find_movie_id(const std::string& imdb_id) {
     auto j = tmdb_get("/find/" + imdb_id, "external_source=imdb_id");
-    if (j.is_null()) return 0;
-    try {
-        auto& results = j["movie_results"];
-        if (results.is_array() && !results.empty())
-            return results[0].value("id", 0);
-    } catch (...) {}
-    return 0;
+    if (j.is_null()) {
+        std::cerr << "    [scraper] TMDB: request failed for " << imdb_id << "\n";
+        return 0;
+    }
+    if (!j.contains("movie_results")) {
+        std::cerr << "    [scraper] TMDB: unexpected response: " << j.dump() << "\n";
+        return 0;
+    }
+    auto& results = j["movie_results"];
+    if (!results.is_array() || results.empty()) return 0;
+    return results[0].value("id", 0);
 }
 
 } // namespace
@@ -156,8 +164,8 @@ void init(const std::string& api_key, const std::string& bearer_token) {
 }
 
 std::optional<ShowInfo> fetch_show_info(const std::string& imdb_id) {
-    if (g_api_key.empty()) {
-        std::cerr << "    [scraper] No TMDB API key configured\n";
+    if (g_api_key.empty() && g_bearer_token.empty()) {
+        std::cerr << "    [scraper] No TMDB credentials configured\n";
         return std::nullopt;
     }
     std::string id = extract_tt(imdb_id);
@@ -197,7 +205,7 @@ std::optional<ShowInfo> fetch_show_info(const std::string& imdb_id) {
 }
 
 std::vector<EpisodeEntry> fetch_season_episodes(int tmdb_show_id, int season) {
-    if (g_api_key.empty() || tmdb_show_id <= 0) return {};
+    if ((g_api_key.empty() && g_bearer_token.empty()) || tmdb_show_id <= 0) return {};
 
     auto j = tmdb_get("/tv/" + std::to_string(tmdb_show_id)
                     + "/season/" + std::to_string(season));
@@ -227,7 +235,7 @@ std::vector<EpisodeEntry> fetch_season_episodes(int tmdb_show_id, int season) {
 }
 
 std::vector<SeasonSummary> fetch_show_seasons(int tmdb_show_id) {
-    if (g_api_key.empty() || tmdb_show_id <= 0) return {};
+    if ((g_api_key.empty() && g_bearer_token.empty()) || tmdb_show_id <= 0) return {};
     auto j = tmdb_get("/tv/" + std::to_string(tmdb_show_id));
     if (j.is_null() || !j.contains("seasons")) return {};
     std::vector<SeasonSummary> result;
@@ -244,7 +252,7 @@ std::vector<SeasonSummary> fetch_show_seasons(int tmdb_show_id) {
 }
 
 std::optional<MovieInfo> fetch_movie_info(const std::string& imdb_id) {
-    if (g_api_key.empty()) return std::nullopt;
+    if (g_api_key.empty() && g_bearer_token.empty()) return std::nullopt;
     std::string id = extract_tt(imdb_id);
     if (id.empty()) return std::nullopt;
 
@@ -277,7 +285,7 @@ std::optional<MovieInfo> fetch_movie_info(const std::string& imdb_id) {
 }
 
 std::string fetch_poster_url(const std::string& imdb_id) {
-    if (g_api_key.empty()) return {};
+    if (g_api_key.empty() && g_bearer_token.empty()) return {};
     std::string id = extract_tt(imdb_id);
     if (id.empty()) return {};
 
@@ -301,7 +309,7 @@ std::string fetch_imdb_id(int tmdb_id) {
         std::cerr << "    [scraper] fetch_imdb_id: request failed for tmdb_id=" << tmdb_id << "\n";
         return {};
     }
-    std::string id = j.value("imdb_id", "");
+    std::string id = (!j.contains("imdb_id") || j["imdb_id"].is_null()) ? "" : j["imdb_id"].get<std::string>();
     if (id.empty())
         std::cerr << "    [scraper] fetch_imdb_id: no imdb_id in TMDB response for tmdb_id=" << tmdb_id << "\n";
     else
@@ -312,8 +320,8 @@ std::string fetch_imdb_id(int tmdb_id) {
 std::string fetch_movie_imdb_id(int tmdb_id) {
     if ((g_api_key.empty() && g_bearer_token.empty()) || tmdb_id <= 0) return {};
     auto j = tmdb_get("/movie/" + std::to_string(tmdb_id) + "/external_ids");
-    if (j.is_null()) return {};
-    return j.value("imdb_id", "");
+    if (j.is_null() || !j.contains("imdb_id") || j["imdb_id"].is_null()) return {};
+    return j["imdb_id"].get<std::string>();
 }
 
 std::optional<MovieInfo> fetch_movie_info_by_tmdb_id(int tmdb_id) {
@@ -366,6 +374,79 @@ std::vector<SearchResult> search_movies(const std::string& query) {
     return results;
 }
 
+static std::vector<FlickImp::CastMember> parse_cast(const json& j, const std::string& key, int max_cast) {
+    std::vector<FlickImp::CastMember> result;
+    if (!j.contains(key) || !j[key].is_array()) return result;
+    for (const auto& c : j[key]) {
+        if ((int)result.size() >= max_cast) break;
+        FlickImp::CastMember cm;
+        cm.tmdb_person_id = c.value("id", 0);
+        cm.name           = c.contains("name")      && !c["name"].is_null()      ? c["name"].get<std::string>()      : "";
+        cm.character      = c.contains("character") && !c["character"].is_null() ? c["character"].get<std::string>() : "";
+        cm.sort_order     = c.value("order", (int)result.size());
+        if (c.contains("profile_path") && !c["profile_path"].is_null()) {
+            std::string pp = c.value("profile_path", "");
+            if (!pp.empty()) cm.profile_url = IMG_SMALL + pp;
+        }
+        if (cm.tmdb_person_id > 0 && !cm.name.empty())
+            result.push_back(std::move(cm));
+    }
+    return result;
+}
+
+std::vector<FlickImp::CastMember> fetch_episode_cast(int tmdb_show_id, int season, int episode) {
+    if ((g_api_key.empty() && g_bearer_token.empty()) || tmdb_show_id <= 0) return {};
+    auto j = tmdb_get("/tv/" + std::to_string(tmdb_show_id)
+                    + "/season/" + std::to_string(season)
+                    + "/episode/" + std::to_string(episode) + "/credits");
+    if (j.is_null()) return {};
+    auto cast   = parse_cast(j, "cast",        30);
+    auto guests = parse_cast(j, "guest_stars", 20);
+    for (auto& g : guests) {
+        g.sort_order += 1000;  // guests sorted after regulars
+        cast.push_back(std::move(g));
+    }
+    return cast;
+}
+
+std::vector<FlickImp::CastMember> fetch_show_cast(int tmdb_show_id, int max_cast) {
+    if ((g_api_key.empty() && g_bearer_token.empty()) || tmdb_show_id <= 0) return {};
+    auto j = tmdb_get("/tv/" + std::to_string(tmdb_show_id) + "/credits");
+    return j.is_null() ? std::vector<FlickImp::CastMember>{} : parse_cast(j, "cast", max_cast);
+}
+
+std::vector<FlickImp::CastMember> fetch_movie_cast(int tmdb_movie_id, int max_cast) {
+    if ((g_api_key.empty() && g_bearer_token.empty()) || tmdb_movie_id <= 0) return {};
+    auto j = tmdb_get("/movie/" + std::to_string(tmdb_movie_id) + "/credits");
+    return j.is_null() ? std::vector<FlickImp::CastMember>{} : parse_cast(j, "cast", max_cast);
+}
+
+std::string fetch_person_imdb_id(int tmdb_person_id) {
+    if ((g_api_key.empty() && g_bearer_token.empty()) || tmdb_person_id <= 0) return {};
+    auto j = tmdb_get("/person/" + std::to_string(tmdb_person_id) + "/external_ids");
+    if (j.is_null() || !j.contains("imdb_id") || j["imdb_id"].is_null()) return {};
+    return j["imdb_id"].get<std::string>();
+}
+
+std::string fetch_episode_imdb_id(int tmdb_show_id, int season, int episode) {
+    if ((g_api_key.empty() && g_bearer_token.empty()) || tmdb_show_id <= 0) return {};
+    auto j = tmdb_get("/tv/" + std::to_string(tmdb_show_id)
+                    + "/season/" + std::to_string(season)
+                    + "/episode/" + std::to_string(episode)
+                    + "/external_ids");
+    if (j.is_null() || !j.contains("imdb_id") || j["imdb_id"].is_null()) return {};
+    return j["imdb_id"].get<std::string>();
+}
+
+std::string fetch_episode_title(int tmdb_show_id, int season, int episode) {
+    if ((g_api_key.empty() && g_bearer_token.empty()) || tmdb_show_id <= 0) return {};
+    auto j = tmdb_get("/tv/" + std::to_string(tmdb_show_id)
+                    + "/season/" + std::to_string(season)
+                    + "/episode/" + std::to_string(episode));
+    if (j.is_null() || !j.contains("name") || j["name"].is_null()) return {};
+    return j["name"].get<std::string>();
+}
+
 } // namespace FlickImp::Scraper
 
-// SN: 00003
+// SN: 00004

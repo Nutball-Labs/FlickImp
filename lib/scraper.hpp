@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Nutball Labs / Stephen Berg
 #pragma once
+#include "models.hpp"
 #include <optional>
 #include <string>
 #include <vector>
@@ -32,6 +33,7 @@ struct EpisodeEntry {
     std::string title;
     std::string episode_url;   // https://www.themoviedb.org/tv/.../episode/...
     std::string air_date;      // "YYYY-MM-DD"
+    std::string imdb_id;       // tt-number for this episode; empty if unavailable
 };
 
 struct SeasonSummary {
@@ -81,6 +83,21 @@ std::optional<MovieInfo> fetch_movie_info_by_tmdb_id(int tmdb_id);
 std::vector<SearchResult> search_shows(const std::string& query);
 std::vector<SearchResult> search_movies(const std::string& query);
 
+// Fetch cast list (top billed). Returns FlickImp::CastMember without imdb_id set.
+std::vector<FlickImp::CastMember> fetch_show_cast(int tmdb_show_id, int max_cast = 30);
+std::vector<FlickImp::CastMember> fetch_movie_cast(int tmdb_movie_id, int max_cast = 25);
+// Episode-specific cast (regular + guest stars combined).
+std::vector<FlickImp::CastMember> fetch_episode_cast(int tmdb_show_id, int season, int episode);
+
+// Fetch IMDB person ID (nm-number) for a TMDB person ID. Empty string on failure.
+std::string fetch_person_imdb_id(int tmdb_person_id);
+
+// Fetch the IMDB tt-number for a specific episode via TMDB external_ids.
+std::string fetch_episode_imdb_id(int tmdb_show_id, int season, int episode);
+
+// Fetch the title of a specific episode from TMDB.
+std::string fetch_episode_title(int tmdb_show_id, int season, int episode);
+
 } // namespace FlickImp::Scraper
 
-// SN: 00003
+// SN: 00004

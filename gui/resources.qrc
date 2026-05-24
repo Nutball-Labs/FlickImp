@@ -1,0 +1,8 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/images">
+        <file alias="FlickImp_icon.png">../images/FlickImp_icon.png</file>
+    </qresource>
+</RCC>
+
+<!-- SN: 00003 -->

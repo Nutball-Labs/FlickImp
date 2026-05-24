@@ -116,8 +116,9 @@ if(UNIX AND NOT APPLE)
             gui/main.cpp
             gui/MainWindow.h
             gui/MainWindow.cpp
+            gui/resources.qrc
         )
-        set_target_properties(flickimp-config PROPERTIES AUTOMOC ON)
+        set_target_properties(flickimp-config PROPERTIES AUTOMOC ON AUTORCC ON)
         target_include_directories(flickimp-config PRIVATE lib third_party gui)
         target_link_libraries(flickimp-config
             PRIVATE Qt6::Widgets flickimpcorelib
@@ -156,6 +157,9 @@ set(CPACK_PACKAGE_DESCRIPTION
     "A self-hosted web app for tracking TV shows and movies.\n"
     "Runs as a lightweight HTTP daemon; browser UI; IMDB integration.")
 set(CPACK_GENERATOR               "RPM;DEB;TGZ")
+# Use native per-generator filename format (name-version-release.arch.rpm / name_version_arch.deb)
+set(CPACK_RPM_FILE_NAME           "RPM-DEFAULT")
+set(CPACK_DEBIAN_FILE_NAME        "DEB-DEFAULT")
 # RPM-specific
 set(CPACK_RPM_PACKAGE_LICENSE     "GPL-3.0-or-later")
 set(CPACK_RPM_PACKAGE_GROUP       "Applications/Multimedia")

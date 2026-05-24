@@ -10,12 +10,19 @@ FlickImp is for people who watch across multiple streaming services and want a s
 
 ## Features
 
-- **Show tracking** — track current season/episode, streaming service, and watch status (Watching / Paused / Finished)
-- **Season/episode picker** — click "Last watched" on any show card to open a popup with colour-coded seasons (green = all watched, orange = partial, red = none) and a per-episode checklist
-- **Movie list** — maintain a want-to-watch / watched list alongside your shows
-- **TMDB integration** — search-on-add finds the right title from The Movie Database; fetches season lists, episode titles/air-dates, poster art, and release dates automatically; IMDB ID back-filled from TMDB so the episode picker always works
-- **Check All** — ☰ menu → Check All opens a live-scrolling log showing new-episode status for every active show and back-fills any missing movie release dates
-- **Browser UI** — clean dark-theme single-page app; no install required on the client side
+- **Show tracking** — track current season/episode, streaming service, and watch status (Watching / Finished)
+- **Next episode title** — show cards display `Next: S3 − E5 — Episode Title` with the actual episode name fetched from TMDB
+- **Season/episode picker** — click "Last watched" on any show card to open a popup with colour-coded seasons and a per-episode checklist; position tracks the last episode you explicitly watched
+- **Episode browser** — click a show title to open a full-page episode browser with season navigation, episode cards, Watched checkboxes, and per-episode Cast buttons; clicking an episode title opens its TMDB / IMDB links
+- **TMDB / IMDB links** — episode titles, show thumbnails, and movie titles all open a popup with direct TMDB and IMDB links; actor names in the cast modal link to their IMDB person page
+- **Cast** — Cast button on show, movie, and episode cards opens a scrollable cast list with headshots; person lookups are cached cross-show so each actor is only resolved once
+- **NEW badge and smart sort** — shows with unwatched aired episodes float to the top with a green NEW badge after running Check All
+- **Movie list** — want-to-watch / watched list with tense-aware release date labels (Releases / Released / No release date yet)
+- **TMDB integration** — search-on-add with live results; season lists, episode data, poster art, and release dates from TMDB; IMDB IDs back-filled automatically
+- **Check All** — ☰ → Check All streams live progress for every active show and back-fills missing movie release dates
+- **Responsive layout** — 2-column cards by default; 3 columns at ≥ 1200 px; 4 columns at ≥ 1600 px
+- **About** — ☰ → About shows app version, copyright, and links
+- **Browser UI** — dark-theme single-page app; dual watermarks (Nutball-Labs on main, FlickImp icon on episode browser)
 - **REST API** — JSON API backing the UI; scriptable from curl or any HTTP client
 - **SQLite storage** — single database file, no separate database server required
 - **Qt6 configurator** (`flickimp-config`) — desktop app for service control and TMDB credential management
@@ -24,8 +31,8 @@ FlickImp is for people who watch across multiple streaming services and want a s
 
 ## Requirements
 
-**Platform:** Linux (x86_64). Primary development and testing on Alma Linux 9.x / RHEL 9.
-Other Linux distributions should work but are not regularly tested. macOS and Windows are not currently supported.
+**Platform:** Linux (x86_64) — primary. macOS and Windows builds are in progress for v1.0.
+Primary development and testing on Alma Linux 9.x / RHEL 9; other Linux distributions should work but are not regularly tested.
 
 **Build dependencies:**
 
@@ -76,7 +83,7 @@ Configuration is read from `/etc/flickimp/fi_config.json` when running as a syst
 
 ## Project Status
 
-**v0.2.1a — Active development.** HTTP daemon, web UI, TMDB integration, season/episode picker popup, and Qt6 configurator are all functional.
+**v1.0.0 — Initial public release.** HTTP daemon, web UI, episode browser, cast with IMDB/TMDB links, About modal, TMDB integration, and Qt6 configurator are all functional. macOS and Windows builds coming soon.
 
 ---
 
@@ -96,4 +103,4 @@ feature decisions, and real-world testing are entirely human-driven.
 GNU General Public License v3 — see [LICENSE](LICENSE).
 Copyright (C) 2026 Nutball Labs / Stephen Berg
 
-<!-- SN: 00002 -->
+<!-- SN: 00004 -->

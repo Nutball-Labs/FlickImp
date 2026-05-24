@@ -2,14 +2,17 @@
 // Copyright (C) 2026 Nutball Labs / Stephen Berg
 #include "MainWindow.h"
 #include "../lib/config.hpp"
+#include "../lib/version.hpp"
 #include <QCheckBox>
 #include <QDesktopServices>
 #include <QFile>
+#include <QFont>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QPixmap>
 #include <QPushButton>
 #include <QProcess>
 #include <QSpinBox>
@@ -48,7 +51,7 @@ void MainWindow::writeSystemConfig(int port, const QString& dbPath,
     cfg.tmdb_bearer_token  = bearerToken.toStdString();
     FlickImp::save_config_to(cfg, STAGING_CONFIG);
     QProcess::execute("pkexec", {
-        "install", "-m", "640", "-o", "root", "-g", "flickimp",
+        "install", "-m", "644", "-o", "root", "-g", "flickimp",
         STAGING_CONFIG, SYSTEM_CONFIG
     });
     QFile::remove(STAGING_CONFIG);
@@ -58,13 +61,43 @@ void MainWindow::writeSystemConfig(int port, const QString& dbPath,
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle("FlickImp Service");
-    setFixedSize(440, 480);
+    setFixedSize(440, 560);
 
     auto* central = new QWidget(this);
     setCentralWidget(central);
     auto* root = new QVBoxLayout(central);
     root->setContentsMargins(16, 16, 16, 16);
     root->setSpacing(10);
+
+    // --- Identity header ---
+    auto* hdrRow = new QHBoxLayout;
+    hdrRow->setSpacing(12);
+
+    auto* logoLabel = new QLabel;
+    QPixmap logoPixmap(":/images/FlickImp_icon.png");
+    logoLabel->setPixmap(logoPixmap.scaledToHeight(64, Qt::SmoothTransformation));
+    logoLabel->setFixedSize(64, 64);
+    hdrRow->addWidget(logoLabel);
+
+    auto* titleCol = new QVBoxLayout;
+    titleCol->setSpacing(2);
+    auto* appNameLabel = new QLabel(APP_NAME);
+    QFont titleFont = appNameLabel->font();
+    titleFont.setPointSize(18);
+    titleFont.setBold(true);
+    appNameLabel->setFont(titleFont);
+    auto* versionLabel = new QLabel(QString("Version %1").arg(APP_VERSION));
+    versionLabel->setStyleSheet("color: gray; font-size: 10pt;");
+    titleCol->addWidget(appNameLabel);
+    titleCol->addWidget(versionLabel);
+    hdrRow->addLayout(titleCol);
+    hdrRow->addStretch();
+    root->addLayout(hdrRow);
+
+    auto* sep0 = new QFrame;
+    sep0->setFrameShape(QFrame::HLine);
+    sep0->setFrameShadow(QFrame::Sunken);
+    root->addWidget(sep0);
 
     // --- Status row ---
     auto* statusRow = new QHBoxLayout;
