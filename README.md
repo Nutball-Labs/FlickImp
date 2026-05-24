@@ -29,6 +29,14 @@ FlickImp is for people who watch across multiple streaming services and want a s
 
 ---
 
+## Screenshots
+
+![FlickImp Main View](screenshots/FlickImp-Main.png)
+
+See [screenshots/Screenshots.md](screenshots/Screenshots.md) for the full set — Add Show search, episode picker, episode browser, cast modal, service configurator, and About dialog.
+
+---
+
 ## Requirements
 
 **Platform:** Linux (x86_64) — primary. macOS and Windows builds are in progress for v1.0.
@@ -104,3 +112,4 @@ GNU General Public License v3 — see [LICENSE](LICENSE).
 Copyright (C) 2026 Nutball Labs / Stephen Berg
 
 <!-- SN: 00004 -->
+
