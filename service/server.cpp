@@ -59,6 +59,9 @@ static json show_to_json(const Show& s) {
         {"next_episode",        s.next_episode},
         {"next_episode_title",  s.next_episode_title},
         {"status",         status_str[static_cast<int>(s.status)]},
+        {"queue",          s.queue == ShowQueue::Queued ? "queued" : "current"},
+        {"queue_id",       s.queue_id},
+        {"sort_order",     s.sort_order},
         {"notes",          s.notes},
         {"thumbnail_url",  s.thumbnail_url},
     };
@@ -74,6 +77,8 @@ static json movie_to_json(const Movie& m) {
         {"release_date",  m.release_date},
         {"thumbnail_url", m.thumbnail_url},
         {"status",        status_str[static_cast<int>(m.status)]},
+        {"queue_id",      m.queue_id},
+        {"sort_order",    m.sort_order},
         {"notes",         m.notes},
     };
 }
@@ -82,6 +87,11 @@ static ShowStatus show_status_from(const std::string& s) {
     if (s == "paused")   return ShowStatus::Paused;
     if (s == "finished") return ShowStatus::Finished;
     return ShowStatus::Watching;
+}
+
+static ShowQueue show_queue_from(const std::string& s) {
+    if (s == "queued") return ShowQueue::Queued;
+    return ShowQueue::Current;
 }
 
 static MovieStatus movie_status_from(const std::string& s) {
@@ -96,6 +106,15 @@ static json cast_member_to_json(const CastMember& cm) {
         {"imdb_id",        cm.imdb_id},
         {"profile_url",    cm.profile_url},
         {"tmdb_person_id", cm.tmdb_person_id}
+    };
+}
+
+static json queue_to_json(const Queue& q) {
+    return {
+        {"id",         q.id},
+        {"name",       q.name},
+        {"sort_order", q.sort_order},
+        {"pin",        q.pin},
     };
 }
 
@@ -153,11 +172,75 @@ Server::Server(const std::string& db_path, const std::string& web_root, int port
         });
     });
 
-    // --- GET /api/shows ---------------------------------------------------
-    srv.Get("/api/shows", [&](const httplib::Request&, httplib::Response& res) {
+    // --- GET /api/queues -------------------------------------------------
+    srv.Get("/api/queues", [&](const httplib::Request&, httplib::Response& res) {
         try {
             json arr = json::array();
+            for (const auto& q : db.all_queues())
+                arr.push_back(queue_to_json(q));
+            json_response(res, arr);
+        } catch (const std::exception& e) {
+            error_response(res, e.what(), 500);
+        }
+    });
+
+    // --- POST /api/queues ------------------------------------------------
+    srv.Post("/api/queues", [&](const httplib::Request& req, httplib::Response& res) {
+        try {
+            auto j = json::parse(req.body);
+            Queue q;
+            q.name = j.value("name", "");
+            if (q.name.empty()) { error_response(res, "name required"); return; }
+            q.sort_order = static_cast<int>(db.all_queues().size()) + 1;
+            q.id = db.add_queue(q);
+            json_response(res, queue_to_json(q), 201);
+        } catch (const std::exception& e) {
+            error_response(res, e.what(), 500);
+        }
+    });
+
+    // --- PUT /api/queues/:id ---------------------------------------------
+    srv.Put(R"(/api/queues/(\d+))", [&](const httplib::Request& req, httplib::Response& res) {
+        try {
+            int id = std::stoi(req.matches[1]);
+            Queue q = db.get_queue(id);
+            auto j = json::parse(req.body);
+            if (j.contains("name"))       q.name       = j["name"];
+            if (j.contains("pin"))        q.pin        = j["pin"];
+            if (j.contains("sort_order")) q.sort_order = j["sort_order"];
+            db.update_queue(q);
+            json_response(res, queue_to_json(q));
+        } catch (const DbError& e) {
+            error_response(res, e.what(), 404);
+        } catch (const std::exception& e) {
+            error_response(res, e.what(), 500);
+        }
+    });
+
+    // --- DELETE /api/queues/:id ------------------------------------------
+    srv.Delete(R"(/api/queues/(\d+))", [&](const httplib::Request& req, httplib::Response& res) {
+        try {
+            int id = std::stoi(req.matches[1]);
+            if (db.queue_count() <= 1) {
+                error_response(res, "Cannot delete the last queue");
+                return;
+            }
+            db.delete_queue(id);
+            json_response(res, {{"ok", true}});
+        } catch (const std::exception& e) {
+            error_response(res, e.what(), 500);
+        }
+    });
+
+    // --- GET /api/shows ---------------------------------------------------
+    srv.Get("/api/shows", [&](const httplib::Request& req, httplib::Response& res) {
+        try {
+            int qid = 0;
+            if (req.has_param("queue_id"))
+                qid = std::stoi(req.get_param_value("queue_id"));
+            json arr = json::array();
             for (auto s : db.all_shows()) {
+                if (qid > 0 && s.queue_id != qid) continue;
                 // Backfill next_episode_title for shows that pre-date the field.
                 if (s.next_season > 0 && s.tmdb_id > 0 && s.next_episode_title.empty()) {
                     s.next_episode_title =
@@ -190,8 +273,11 @@ Server::Server(const std::string& db_path, const std::string& web_root, int port
                 s.imdb_id = Scraper::fetch_imdb_id(s.tmdb_id);
             s.total_episodes = j.value("total_episodes", 0);
             s.status         = show_status_from(j.value("status", "watching"));
+            s.queue          = show_queue_from(j.value("queue", "current"));
+            s.queue_id       = j.value("queue_id", 1);
             s.notes          = j.value("notes", "");
             if (s.title.empty()) { error_response(res, "title required"); return; }
+            s.sort_order = db.max_show_sort_order(s.queue, s.queue_id) + 1;
             std::string req_thumb = j.value("thumbnail_url", "");
             if (!req_thumb.empty())
                 s.thumbnail_url = req_thumb;
@@ -221,6 +307,21 @@ Server::Server(const std::string& db_path, const std::string& web_root, int port
             }
             if (j.contains("total_episodes")) s.total_episodes = j["total_episodes"];
             if (j.contains("status"))         s.status         = show_status_from(j["status"]);
+            if (j.contains("queue_id")) {
+                int new_qid = j["queue_id"];
+                if (new_qid != s.queue_id) {
+                    s.queue_id = new_qid;
+                    s.sort_order = db.max_show_sort_order(s.queue, s.queue_id) + 1;
+                }
+            }
+            if (j.contains("queue")) {
+                auto new_queue = show_queue_from(j["queue"]);
+                if (new_queue != s.queue) {
+                    s.queue = new_queue;
+                    s.sort_order = db.max_show_sort_order(s.queue, s.queue_id) + 1;
+                }
+            }
+            if (j.contains("sort_order"))     s.sort_order     = j["sort_order"];
             if (j.contains("notes"))          s.notes          = j["notes"];
             db.update_show(s);
             json_response(res, show_to_json(s));
@@ -242,11 +343,33 @@ Server::Server(const std::string& db_path, const std::string& web_root, int port
         }
     });
 
-    // --- GET /api/movies --------------------------------------------------
-    srv.Get("/api/movies", [&](const httplib::Request&, httplib::Response& res) {
+    // --- PUT /api/shows/reorder -------------------------------------------
+    srv.Put("/api/shows/reorder", [&](const httplib::Request& req, httplib::Response& res) {
         try {
+            auto j = json::parse(req.body);
+            if (!j.contains("order") || !j["order"].is_array()) {
+                error_response(res, "order array required");
+                return;
+            }
+            std::vector<int> ids;
+            for (const auto& id : j["order"])
+                ids.push_back(id.get<int>());
+            db.reorder_shows(ids);
+            json_response(res, {{"ok", true}});
+        } catch (const std::exception& e) {
+            error_response(res, e.what(), 500);
+        }
+    });
+
+    // --- GET /api/movies --------------------------------------------------
+    srv.Get("/api/movies", [&](const httplib::Request& req, httplib::Response& res) {
+        try {
+            int qid = 0;
+            if (req.has_param("queue_id"))
+                qid = std::stoi(req.get_param_value("queue_id"));
             json arr = json::array();
             for (auto m : db.all_movies()) {
+                if (qid > 0 && m.queue_id != qid) continue;
                 // Backfill tmdb_id for movies added before it was tracked.
                 if (m.tmdb_id == 0 && !m.imdb_id.empty()) {
                     auto info = Scraper::fetch_movie_info(m.imdb_id);
@@ -271,9 +394,11 @@ Server::Server(const std::string& db_path, const std::string& web_root, int port
             m.title   = j.value("title", "");
             m.imdb_id = clean_imdb_id(j.value("imdb_id", ""));
             m.tmdb_id = j.value("tmdb_id", 0);
-            m.status  = movie_status_from(j.value("status", "want_to_watch"));
-            m.notes   = j.value("notes", "");
+            m.status   = movie_status_from(j.value("status", "want_to_watch"));
+            m.queue_id = j.value("queue_id", 1);
+            m.notes    = j.value("notes", "");
             if (m.title.empty()) { error_response(res, "title required"); return; }
+            m.sort_order = db.max_movie_sort_order(m.queue_id) + 1;
             if (m.imdb_id.empty() && m.tmdb_id != 0)
                 m.imdb_id = Scraper::fetch_movie_imdb_id(m.tmdb_id);
             std::string req_thumb = j.value("thumbnail_url", "");
@@ -330,6 +455,24 @@ Server::Server(const std::string& db_path, const std::string& web_root, int port
         try {
             int id = std::stoi(req.matches[1]);
             db.delete_movie(id);
+            json_response(res, {{"ok", true}});
+        } catch (const std::exception& e) {
+            error_response(res, e.what(), 500);
+        }
+    });
+
+    // --- PUT /api/movies/reorder -------------------------------------------
+    srv.Put("/api/movies/reorder", [&](const httplib::Request& req, httplib::Response& res) {
+        try {
+            auto j = json::parse(req.body);
+            if (!j.contains("order") || !j["order"].is_array()) {
+                error_response(res, "order array required");
+                return;
+            }
+            std::vector<int> ids;
+            for (const auto& id : j["order"])
+                ids.push_back(id.get<int>());
+            db.reorder_movies(ids);
             json_response(res, {{"ok", true}});
         } catch (const std::exception& e) {
             error_response(res, e.what(), 500);

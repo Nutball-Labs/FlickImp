@@ -6,6 +6,8 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="images/apple-touch-icon.png">
 <title>FlickImp</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -17,12 +19,27 @@
     <button class="btn-menu" onclick="toggleMenu()" aria-label="Menu">&#9776;</button>
     <div class="menu-dropdown hidden" id="menu-dropdown">
       <button class="menu-item" onclick="openCheckModal()">Check All</button>
+      <button class="menu-item" onclick="openManageQueuesModal()">Manage Queues</button>
+      <div class="menu-zoom">
+        <button class="zoom-btn" onclick="zoomOut()" aria-label="Zoom out">&minus;</button>
+        <span class="zoom-label" id="zoom-label">100%</span>
+        <button class="zoom-btn" onclick="zoomIn()" aria-label="Zoom in">+</button>
+      </div>
       <button class="menu-item" onclick="openAboutModal()">About</button>
     </div>
   </div>
 </header>
 
 <main id="main-view">
+
+  <!-- ===== Queue tabs ===== -->
+  <div class="queue-tabs" id="queue-tabs"></div>
+
+  <!-- ===== Main tabs ===== -->
+  <div class="main-tabs">
+    <button class="tab-btn active" id="tab-shows"  onclick="switchMainTab('shows')">Shows</button>
+    <button class="tab-btn"        id="tab-movies" onclick="switchMainTab('movies')">Movies</button>
+  </div>
 
   <!-- ===== Shows ===== -->
   <section id="shows-section">
@@ -31,20 +48,29 @@
       <button class="btn-add" onclick="showAddShowForm()">+ Show</button>
     </div>
 
-    <div id="shows-list" class="card-list">
+    <div class="sub-tabs">
+      <button class="subtab-btn active" id="subtab-current" onclick="switchShowsTab('current')">Current</button>
+      <button class="subtab-btn"        id="subtab-queued"  onclick="switchShowsTab('queued')">Queued</button>
+    </div>
+
+    <div id="shows-list" class="card-list"
+         ondragover="listDragOver(event,'show')"
+         ondrop="listDrop(event,'show')">
       <div class="empty">Loading...</div>
     </div>
 
   </section>
 
   <!-- ===== Movies ===== -->
-  <section id="movies-section">
+  <section id="movies-section" class="hidden">
     <div class="section-header">
       <h2>Movies</h2>
       <button class="btn-add" onclick="showAddMovieForm()">+ Movie</button>
     </div>
 
-    <div id="movies-list" class="card-list">
+    <div id="movies-list" class="card-list"
+         ondragover="listDragOver(event,'movie')"
+         ondrop="listDrop(event,'movie')">
       <div class="empty">Loading...</div>
     </div>
 
@@ -214,6 +240,19 @@
 <div id="ep-link-popup" class="ep-link-popup hidden">
   <a id="ep-link-tmdb" href="#" target="_blank" rel="noopener" class="ep-link-btn tmdb-btn">TMDB</a>
   <a id="ep-link-imdb" href="#" target="_blank" rel="noopener" class="ep-link-btn imdb-btn">IMDB</a>
+</div>
+
+<!-- ===== Manage Queues modal ===== -->
+<div class="modal-overlay hidden" id="manage-queues-modal" onclick="manageQueuesModalClick(event)">
+  <div class="modal-dialog add-modal-dialog">
+    <div class="modal-header">
+      <div class="modal-title">Manage Queues</div>
+      <button class="modal-close" onclick="closeManageQueuesModal()">&#x2715;</button>
+    </div>
+    <div class="modal-form-body" id="manage-queues-body">
+      <div class="empty">Loading...</div>
+    </div>
+  </div>
 </div>
 
 <script src="app.js"></script>

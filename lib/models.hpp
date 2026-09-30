@@ -7,6 +7,14 @@ namespace FlickImp {
 
 enum class ShowStatus  { Watching = 0, Paused = 1, Finished = 2 };
 enum class MovieStatus { WantToWatch = 0, Watched = 1 };
+enum class ShowQueue   { Current = 0, Queued = 1 };
+
+struct Queue {
+    int         id{0};
+    std::string name;
+    int         sort_order{0};
+    std::string pin;
+};
 
 struct Show {
     int        id{0};
@@ -24,6 +32,9 @@ struct Show {
     int        next_episode{0};
     std::string next_episode_title;
     ShowStatus  status{ShowStatus::Watching};
+    ShowQueue   queue{ShowQueue::Current};
+    int        sort_order{0};
+    int        queue_id{1};
     std::string notes;
     std::string thumbnail_url;
 };
@@ -36,6 +47,8 @@ struct Movie {
     std::string release_date;
     std::string thumbnail_url;
     MovieStatus status{MovieStatus::WantToWatch};
+    int        sort_order{0};
+    int        queue_id{1};
     std::string notes;
 };
 

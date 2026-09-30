@@ -159,6 +159,7 @@ Run before first build: `sudo dnf install libcurl-devel && ./scripts/get-deps.sh
 - **Add Help page to hamburger menu** — Help page with screenshots; screenshots now available in `screenshots/`; page not yet built
 - **Fix episode browser logo crop on initial load** — seasons pane height equals season count before a season is selected, cropping the background logo watermark; selecting a season expands the pane and fixes it; ensure minimum height covers the logo regardless of selection state
 - **Main page hero + Shows/Movies tabs** — show a hero thumbnail of the last-watched item at top of main page; split shows and movies into separate tabs below; tab bar is extensible for future user profiles and PIN-protected queues
+- **Add "Watching" and "Want to Watch" queue types to categorize shows/movies by watch intent**
 
 ## Completed
 

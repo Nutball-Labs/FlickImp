@@ -61,6 +61,20 @@ public:
     void        cache_episode_imdb(int tmdb_show_id, int season, int episode, const std::string& imdb_id);
     std::string get_episode_imdb_id(int tmdb_show_id, int season, int episode);
 
+    // Queues
+    std::vector<Queue> all_queues();
+    Queue              get_queue(int id);
+    int                add_queue(const Queue& q);
+    void               update_queue(const Queue& q);
+    void               delete_queue(int id);
+    int                queue_count();
+
+    // Sort order
+    int  max_show_sort_order(ShowQueue queue, int queue_id);
+    int  max_movie_sort_order(int queue_id);
+    void reorder_shows(const std::vector<int>& ids);
+    void reorder_movies(const std::vector<int>& ids);
+
     // Movies
     std::vector<Movie> all_movies();
     Movie              get_movie(int id);
@@ -76,6 +90,7 @@ private:
 
     static Show  row_to_show(sqlite3_stmt* stmt);
     static Movie row_to_movie(sqlite3_stmt* stmt);
+    static Queue row_to_queue(sqlite3_stmt* stmt);
 };
 
 } // namespace FlickImp

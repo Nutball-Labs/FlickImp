@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Nutball Labs / Stephen Berg
 #include "database.hpp"
+#include <algorithm>
 #include <stdexcept>
 
 namespace FlickImp {
@@ -25,7 +26,9 @@ CREATE TABLE IF NOT EXISTS shows (
     season_episodes  INTEGER NOT NULL DEFAULT 0,
     next_season          INTEGER NOT NULL DEFAULT 0,
     next_episode         INTEGER NOT NULL DEFAULT 0,
-    next_episode_title   TEXT    NOT NULL DEFAULT ''
+    next_episode_title   TEXT    NOT NULL DEFAULT '',
+    queue                INTEGER NOT NULL DEFAULT 0,
+    sort_order           INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS movies (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,7 +37,8 @@ CREATE TABLE IF NOT EXISTS movies (
     release_date  TEXT    NOT NULL DEFAULT '',
     thumbnail_url TEXT    NOT NULL DEFAULT '',
     status        INTEGER NOT NULL DEFAULT 0,
-    notes         TEXT    NOT NULL DEFAULT ''
+    notes         TEXT    NOT NULL DEFAULT '',
+    sort_order    INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS episode_watches (
     show_id  INTEGER NOT NULL REFERENCES shows(id) ON DELETE CASCADE,
@@ -77,6 +81,12 @@ CREATE TABLE IF NOT EXISTS episode_imdb_ids (
     episode      INTEGER NOT NULL,
     imdb_id      TEXT    NOT NULL DEFAULT '',
     PRIMARY KEY (tmdb_show_id, season, episode)
+);
+CREATE TABLE IF NOT EXISTS queues (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    pin        TEXT    NOT NULL DEFAULT ''
 );
 )sql";
 
@@ -147,6 +157,32 @@ void Database::create_schema() {
     sqlite3_exec(db_,
         "ALTER TABLE shows ADD COLUMN next_episode_title TEXT NOT NULL DEFAULT '';",
         nullptr, nullptr, nullptr);
+    sqlite3_exec(db_,
+        "ALTER TABLE shows ADD COLUMN queue INTEGER NOT NULL DEFAULT 0;",
+        nullptr, nullptr, nullptr);
+    sqlite3_exec(db_,
+        "ALTER TABLE shows ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;",
+        nullptr, nullptr, nullptr);
+    sqlite3_exec(db_,
+        "ALTER TABLE movies ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;",
+        nullptr, nullptr, nullptr);
+    sqlite3_exec(db_,
+        "ALTER TABLE shows ADD COLUMN queue_id INTEGER NOT NULL DEFAULT 1;",
+        nullptr, nullptr, nullptr);
+    sqlite3_exec(db_,
+        "ALTER TABLE movies ADD COLUMN queue_id INTEGER NOT NULL DEFAULT 1;",
+        nullptr, nullptr, nullptr);
+    // Seed default queue if none exist
+    {
+        sqlite3_stmt* stmt = nullptr;
+        sqlite3_prepare_v2(db_, "SELECT COUNT(*) FROM queues;", -1, &stmt, nullptr);
+        bool empty = (sqlite3_step(stmt) == SQLITE_ROW && sqlite3_column_int(stmt, 0) == 0);
+        sqlite3_finalize(stmt);
+        if (empty)
+            sqlite3_exec(db_,
+                "INSERT INTO queues (name, sort_order) VALUES ('Default', 1);",
+                nullptr, nullptr, nullptr);
+    }
 }
 
 // ---------- Shows --------------------------------------------------------
@@ -170,13 +206,18 @@ Show Database::row_to_show(sqlite3_stmt* s) {
     sh.next_season         = sqlite3_column_int(s, 14);
     sh.next_episode        = sqlite3_column_int(s, 15);
     sh.next_episode_title  = col_text(s, 16);
+    sh.queue               = static_cast<ShowQueue>(sqlite3_column_int(s, 17));
+    sh.sort_order          = sqlite3_column_int(s, 18);
+    sh.queue_id            = sqlite3_column_int(s, 19);
     return sh;
 }
 
 std::vector<Show> Database::all_shows() {
     const char* sql =
         "SELECT id,title,service,season,episode,imdb_id,total_episodes,status,"
-        "notes,thumbnail_url,tmdb_id,latest_season,latest_episode,season_episodes,next_season,next_episode,next_episode_title FROM shows ORDER BY title COLLATE NOCASE;";
+        "notes,thumbnail_url,tmdb_id,latest_season,latest_episode,season_episodes,"
+        "next_season,next_episode,next_episode_title,queue,sort_order,queue_id "
+        "FROM shows ORDER BY title COLLATE NOCASE;";
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
     std::vector<Show> result;
@@ -189,7 +230,9 @@ std::vector<Show> Database::all_shows() {
 Show Database::get_show(int id) {
     const char* sql =
         "SELECT id,title,service,season,episode,imdb_id,total_episodes,status,"
-        "notes,thumbnail_url,tmdb_id,latest_season,latest_episode,season_episodes,next_season,next_episode,next_episode_title FROM shows WHERE id=?;";
+        "notes,thumbnail_url,tmdb_id,latest_season,latest_episode,season_episodes,"
+        "next_season,next_episode,next_episode_title,queue,sort_order,queue_id "
+        "FROM shows WHERE id=?;";
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
     sqlite3_bind_int(stmt, 1, id);
@@ -206,7 +249,9 @@ int Database::add_show(const Show& s) {
     const char* sql =
         "INSERT INTO shows "
         "(title,service,season,episode,imdb_id,total_episodes,status,notes,"
-        "thumbnail_url,tmdb_id,latest_season,latest_episode,season_episodes,next_season,next_episode,next_episode_title) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);";
+        "thumbnail_url,tmdb_id,latest_season,latest_episode,season_episodes,"
+        "next_season,next_episode,next_episode_title,queue,sort_order,queue_id) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);";
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
     sqlite3_bind_text(stmt,  1, s.title.c_str(),               -1, SQLITE_TRANSIENT);
@@ -225,6 +270,9 @@ int Database::add_show(const Show& s) {
     sqlite3_bind_int (stmt, 14, s.next_season);
     sqlite3_bind_int (stmt, 15, s.next_episode);
     sqlite3_bind_text(stmt, 16, s.next_episode_title.c_str(),   -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int (stmt, 17, static_cast<int>(s.queue));
+    sqlite3_bind_int (stmt, 18, s.sort_order);
+    sqlite3_bind_int (stmt, 19, s.queue_id);
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     return static_cast<int>(sqlite3_last_insert_rowid(db_));
@@ -235,7 +283,7 @@ void Database::update_show(const Show& s) {
         "UPDATE shows SET title=?,service=?,season=?,episode=?,imdb_id=?,"
         "total_episodes=?,status=?,notes=?,thumbnail_url=?,tmdb_id=?,"
         "latest_season=?,latest_episode=?,season_episodes=?,next_season=?,next_episode=?,"
-        "next_episode_title=? WHERE id=?;";
+        "next_episode_title=?,queue=?,sort_order=?,queue_id=? WHERE id=?;";
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
     sqlite3_bind_text(stmt,  1, s.title.c_str(),               -1, SQLITE_TRANSIENT);
@@ -254,7 +302,10 @@ void Database::update_show(const Show& s) {
     sqlite3_bind_int (stmt, 14, s.next_season);
     sqlite3_bind_int (stmt, 15, s.next_episode);
     sqlite3_bind_text(stmt, 16, s.next_episode_title.c_str(),   -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int (stmt, 17, s.id);
+    sqlite3_bind_int (stmt, 17, static_cast<int>(s.queue));
+    sqlite3_bind_int (stmt, 18, s.sort_order);
+    sqlite3_bind_int (stmt, 19, s.queue_id);
+    sqlite3_bind_int (stmt, 20, s.id);
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
 }
@@ -280,6 +331,8 @@ Movie Database::row_to_movie(sqlite3_stmt* s) {
     m.status        = static_cast<MovieStatus>(sqlite3_column_int(s, 5));
     m.notes         = col_text(s, 6);
     m.tmdb_id       = sqlite3_column_int(s, 7);
+    m.sort_order    = sqlite3_column_int(s, 8);
+    m.queue_id      = sqlite3_column_int(s, 9);
     return m;
 }
 
@@ -330,7 +383,7 @@ std::string Database::get_episode_imdb_id(int tmdb_show_id, int season, int epis
 
 std::vector<Movie> Database::all_movies() {
     const char* sql =
-        "SELECT id,title,imdb_id,release_date,thumbnail_url,status,notes,tmdb_id "
+        "SELECT id,title,imdb_id,release_date,thumbnail_url,status,notes,tmdb_id,sort_order,queue_id "
         "FROM movies ORDER BY title COLLATE NOCASE;";
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
@@ -343,7 +396,7 @@ std::vector<Movie> Database::all_movies() {
 
 Movie Database::get_movie(int id) {
     const char* sql =
-        "SELECT id,title,imdb_id,release_date,thumbnail_url,status,notes,tmdb_id "
+        "SELECT id,title,imdb_id,release_date,thumbnail_url,status,notes,tmdb_id,sort_order,queue_id "
         "FROM movies WHERE id=?;";
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
@@ -360,8 +413,8 @@ Movie Database::get_movie(int id) {
 int Database::add_movie(const Movie& m) {
     const char* sql =
         "INSERT INTO movies "
-        "(title,imdb_id,release_date,thumbnail_url,status,notes,tmdb_id) "
-        "VALUES (?,?,?,?,?,?,?);";
+        "(title,imdb_id,release_date,thumbnail_url,status,notes,tmdb_id,sort_order,queue_id) "
+        "VALUES (?,?,?,?,?,?,?,?,?);";
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
     sqlite3_bind_text(stmt, 1, m.title.c_str(),         -1, SQLITE_TRANSIENT);
@@ -371,6 +424,8 @@ int Database::add_movie(const Movie& m) {
     sqlite3_bind_int (stmt, 5, static_cast<int>(m.status));
     sqlite3_bind_text(stmt, 6, m.notes.c_str(),         -1, SQLITE_TRANSIENT);
     sqlite3_bind_int (stmt, 7, m.tmdb_id);
+    sqlite3_bind_int (stmt, 8, m.sort_order);
+    sqlite3_bind_int (stmt, 9, m.queue_id);
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     return static_cast<int>(sqlite3_last_insert_rowid(db_));
@@ -379,7 +434,7 @@ int Database::add_movie(const Movie& m) {
 void Database::update_movie(const Movie& m) {
     const char* sql =
         "UPDATE movies SET title=?,imdb_id=?,release_date=?,thumbnail_url=?,"
-        "status=?,notes=?,tmdb_id=? WHERE id=?;";
+        "status=?,notes=?,tmdb_id=?,sort_order=?,queue_id=? WHERE id=?;";
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
     sqlite3_bind_text(stmt, 1, m.title.c_str(),         -1, SQLITE_TRANSIENT);
@@ -389,7 +444,9 @@ void Database::update_movie(const Movie& m) {
     sqlite3_bind_int (stmt, 5, static_cast<int>(m.status));
     sqlite3_bind_text(stmt, 6, m.notes.c_str(),         -1, SQLITE_TRANSIENT);
     sqlite3_bind_int (stmt, 7, m.tmdb_id);
-    sqlite3_bind_int (stmt, 8, m.id);
+    sqlite3_bind_int (stmt, 8, m.sort_order);
+    sqlite3_bind_int (stmt, 9, m.queue_id);
+    sqlite3_bind_int (stmt, 10, m.id);
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
 }
@@ -693,6 +750,161 @@ std::vector<CastMember> Database::get_episode_cast(int show_id, int season, int 
         cm.profile_url    = col_text(stmt, 5);
         result.push_back(std::move(cm));
     }
+    sqlite3_finalize(stmt);
+    return result;
+}
+
+// ---------- Sort order ----------------------------------------------------
+
+int Database::max_show_sort_order(ShowQueue queue, int queue_id) {
+    const char* sql = "SELECT MAX(sort_order) FROM shows WHERE queue=? AND queue_id=?;";
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, static_cast<int>(queue));
+    sqlite3_bind_int(stmt, 2, queue_id);
+    int result = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+        result = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
+    return result;
+}
+
+int Database::max_movie_sort_order(int queue_id) {
+    const char* sql = "SELECT MAX(sort_order) FROM movies WHERE queue_id=?;";
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, queue_id);
+    int result = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+        result = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
+    return result;
+}
+
+void Database::reorder_shows(const std::vector<int>& ids) {
+    exec("BEGIN;");
+    const char* sql = "UPDATE shows SET sort_order=? WHERE id=?;";
+    for (size_t i = 0; i < ids.size(); ++i) {
+        sqlite3_stmt* stmt = nullptr;
+        sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+        sqlite3_bind_int(stmt, 1, static_cast<int>(i + 1));
+        sqlite3_bind_int(stmt, 2, ids[i]);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+    exec("COMMIT;");
+}
+
+void Database::reorder_movies(const std::vector<int>& ids) {
+    exec("BEGIN;");
+    const char* sql = "UPDATE movies SET sort_order=? WHERE id=?;";
+    for (size_t i = 0; i < ids.size(); ++i) {
+        sqlite3_stmt* stmt = nullptr;
+        sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+        sqlite3_bind_int(stmt, 1, static_cast<int>(i + 1));
+        sqlite3_bind_int(stmt, 2, ids[i]);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+    exec("COMMIT;");
+}
+
+// ---------- Queues -----------------------------------------------------------
+
+Queue Database::row_to_queue(sqlite3_stmt* s) {
+    Queue q;
+    q.id         = sqlite3_column_int(s, 0);
+    q.name       = col_text(s, 1);
+    q.sort_order = sqlite3_column_int(s, 2);
+    q.pin        = col_text(s, 3);
+    return q;
+}
+
+std::vector<Queue> Database::all_queues() {
+    const char* sql = "SELECT id,name,sort_order,pin FROM queues ORDER BY sort_order,id;";
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    std::vector<Queue> result;
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+        result.push_back(row_to_queue(stmt));
+    sqlite3_finalize(stmt);
+    return result;
+}
+
+Queue Database::get_queue(int id) {
+    const char* sql = "SELECT id,name,sort_order,pin FROM queues WHERE id=?;";
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, id);
+    if (sqlite3_step(stmt) != SQLITE_ROW) {
+        sqlite3_finalize(stmt);
+        throw DbError("Queue not found: " + std::to_string(id));
+    }
+    Queue q = row_to_queue(stmt);
+    sqlite3_finalize(stmt);
+    return q;
+}
+
+int Database::add_queue(const Queue& q) {
+    const char* sql = "INSERT INTO queues (name,sort_order,pin) VALUES (?,?,?);";
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    sqlite3_bind_text(stmt, 1, q.name.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int (stmt, 2, q.sort_order);
+    sqlite3_bind_text(stmt, 3, q.pin.c_str(),  -1, SQLITE_TRANSIENT);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return static_cast<int>(sqlite3_last_insert_rowid(db_));
+}
+
+void Database::update_queue(const Queue& q) {
+    const char* sql = "UPDATE queues SET name=?,sort_order=?,pin=? WHERE id=?;";
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    sqlite3_bind_text(stmt, 1, q.name.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int (stmt, 2, q.sort_order);
+    sqlite3_bind_text(stmt, 3, q.pin.c_str(),  -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int (stmt, 4, q.id);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+void Database::delete_queue(int id) {
+    exec("BEGIN;");
+    {
+        const char* sql = "UPDATE shows SET queue_id=1 WHERE queue_id=?;";
+        sqlite3_stmt* stmt = nullptr;
+        sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+        sqlite3_bind_int(stmt, 1, id);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+    {
+        const char* sql = "UPDATE movies SET queue_id=1 WHERE queue_id=?;";
+        sqlite3_stmt* stmt = nullptr;
+        sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+        sqlite3_bind_int(stmt, 1, id);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+    {
+        const char* sql = "DELETE FROM queues WHERE id=?;";
+        sqlite3_stmt* stmt = nullptr;
+        sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+        sqlite3_bind_int(stmt, 1, id);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+    exec("COMMIT;");
+}
+
+int Database::queue_count() {
+    const char* sql = "SELECT COUNT(*) FROM queues;";
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    int result = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+        result = sqlite3_column_int(stmt, 0);
     sqlite3_finalize(stmt);
     return result;
 }

@@ -112,20 +112,233 @@ function selectMovieResult(tmdbId, title, posterUrl) {
     document.getElementById('movie-search-results').classList.add('hidden');
 }
 
+// ---------- Drag-and-drop reorder ----------------------------------------
+
+let g_drag_id = 0;
+let g_drag_type = '';  // 'show' or 'movie'
+let g_can_drag = false;
+
+document.addEventListener('mouseup', () => { g_can_drag = false; });
+
+function dragHandleDown(event) {
+    g_can_drag = true;
+    event.stopPropagation();
+}
+
+function itemDragStart(event, type, id) {
+    if (!g_can_drag) { event.preventDefault(); return; }
+    g_drag_id = id;
+    g_drag_type = type;
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', String(id));
+    const wrap = event.currentTarget;
+    setTimeout(() => wrap.classList.add('dragging'), 0);
+}
+
+function itemDragEnd(event) {
+    event.currentTarget.classList.remove('dragging');
+    document.querySelectorAll('.drag-over-before, .drag-over-after')
+        .forEach(el => { el.classList.remove('drag-over-before', 'drag-over-after'); });
+    g_drag_id = 0;
+    g_drag_type = '';
+}
+
+function itemDragOver(event) {
+    if (!g_drag_id) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    const wrap = event.currentTarget;
+    if (wrap.classList.contains('dragging')) return;
+    document.querySelectorAll('.drag-over-before, .drag-over-after')
+        .forEach(el => { el.classList.remove('drag-over-before', 'drag-over-after'); });
+    const rect = wrap.getBoundingClientRect();
+    const midX = rect.left + rect.width / 2;
+    if (event.clientX < midX) {
+        wrap.classList.add('drag-over-before');
+        const prev = wrap.previousElementSibling;
+        if (prev && !prev.classList.contains('dragging')) {
+            const prevRect = prev.getBoundingClientRect();
+            if (Math.abs(prevRect.top - rect.top) > 10)
+                prev.classList.add('drag-over-after');
+        }
+    } else {
+        wrap.classList.add('drag-over-after');
+        const next = wrap.nextElementSibling;
+        if (next && !next.classList.contains('dragging')) {
+            const nextRect = next.getBoundingClientRect();
+            if (Math.abs(nextRect.top - rect.top) > 10)
+                next.classList.add('drag-over-before');
+        }
+    }
+}
+
+function itemDragLeave(event) {
+    const wrap = event.currentTarget;
+    if (!wrap.contains(event.relatedTarget))
+        wrap.classList.remove('drag-over-before', 'drag-over-after');
+}
+
+function showDrop(event, targetId) {
+    event.preventDefault();
+    const targetWrap = event.currentTarget;
+    const insertAfter = targetWrap.classList.contains('drag-over-after');
+    document.querySelectorAll('.drag-over-before, .drag-over-after')
+        .forEach(el => { el.classList.remove('drag-over-before', 'drag-over-after'); });
+    if (!g_drag_id || g_drag_id === targetId || g_drag_type !== 'show') return;
+
+    const isQueued = g_shows_tab === 'queued';
+    const filtered = g_shows.filter(s => (s.queue === 'queued') === isQueued);
+    sortShowArray(filtered);
+    const ids = filtered.map(s => s.id);
+    const dragIdx = ids.indexOf(g_drag_id);
+    if (dragIdx < 0) return;
+
+    ids.splice(dragIdx, 1);
+    let dropIdx = ids.indexOf(targetId);
+    if (dropIdx < 0) return;
+    if (insertAfter) dropIdx += 1;
+    ids.splice(dropIdx, 0, g_drag_id);
+
+    ids.forEach((id, i) => {
+        const show = g_shows.find(s => s.id === id);
+        if (show) show.sort_order = i + 1;
+    });
+    renderShows(g_shows);
+    api('PUT', '/api/shows/reorder', { order: ids });
+}
+
+function movieDrop(event, targetId) {
+    event.preventDefault();
+    const targetWrap = event.currentTarget;
+    const insertAfter = targetWrap.classList.contains('drag-over-after');
+    document.querySelectorAll('.drag-over-before, .drag-over-after')
+        .forEach(el => { el.classList.remove('drag-over-before', 'drag-over-after'); });
+    if (!g_drag_id || g_drag_id === targetId || g_drag_type !== 'movie') return;
+
+    sortMovieArray(g_movies);
+    const ids = g_movies.map(m => m.id);
+    const dragIdx = ids.indexOf(g_drag_id);
+    if (dragIdx < 0) return;
+
+    ids.splice(dragIdx, 1);
+    let dropIdx = ids.indexOf(targetId);
+    if (dropIdx < 0) return;
+    if (insertAfter) dropIdx += 1;
+    ids.splice(dropIdx, 0, g_drag_id);
+
+    ids.forEach((id, i) => {
+        const movie = g_movies.find(m => m.id === id);
+        if (movie) movie.sort_order = i + 1;
+    });
+    renderMovies(g_movies);
+    api('PUT', '/api/movies/reorder', { order: ids });
+}
+
+function listDragEdge(event, type) {
+    const listId = type === 'show' ? 'shows-list' : 'movies-list';
+    const sel = type === 'show' ? '.show-wrap:not(.dragging)' : '.movie-wrap:not(.dragging)';
+    const items = document.getElementById(listId).querySelectorAll(sel);
+    if (!items.length) return null;
+    const firstRect = items[0].getBoundingClientRect();
+    const lastRect  = items[items.length - 1].getBoundingClientRect();
+    const atStart = event.clientY < firstRect.top ||
+        (event.clientY < firstRect.bottom && event.clientX < firstRect.left);
+    if (atStart) return { el: items[0], cls: 'drag-over-before', pos: 'start' };
+    return { el: items[items.length - 1], cls: 'drag-over-after', pos: 'end' };
+}
+
+function listDragOver(event, type) {
+    if (!g_drag_id || g_drag_type !== type) return;
+    const wrap = event.target.closest('.show-wrap, .movie-wrap');
+    if (wrap) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    document.querySelectorAll('.drag-over-before, .drag-over-after')
+        .forEach(el => { el.classList.remove('drag-over-before', 'drag-over-after'); });
+    const edge = listDragEdge(event, type);
+    if (edge) edge.el.classList.add(edge.cls);
+}
+
+function listDrop(event, type) {
+    if (!g_drag_id || g_drag_type !== type) return;
+    const wrap = event.target.closest('.show-wrap, .movie-wrap');
+    if (wrap) return;
+    event.preventDefault();
+    const edge = listDragEdge(event, type);
+    document.querySelectorAll('.drag-over-before, .drag-over-after')
+        .forEach(el => { el.classList.remove('drag-over-before', 'drag-over-after'); });
+    const atStart = edge && edge.pos === 'start';
+    if (type === 'show') {
+        const isQueued = g_shows_tab === 'queued';
+        const filtered = g_shows.filter(s => (s.queue === 'queued') === isQueued);
+        sortShowArray(filtered);
+        const ids = filtered.map(s => s.id);
+        const dragIdx = ids.indexOf(g_drag_id);
+        if (dragIdx < 0) return;
+        ids.splice(dragIdx, 1);
+        if (atStart) ids.unshift(g_drag_id); else ids.push(g_drag_id);
+        ids.forEach((id, i) => {
+            const show = g_shows.find(s => s.id === id);
+            if (show) show.sort_order = i + 1;
+        });
+        renderShows(g_shows);
+        api('PUT', '/api/shows/reorder', { order: ids });
+    } else {
+        sortMovieArray(g_movies);
+        const ids = g_movies.map(m => m.id);
+        const dragIdx = ids.indexOf(g_drag_id);
+        if (dragIdx < 0) return;
+        ids.splice(dragIdx, 1);
+        if (atStart) ids.unshift(g_drag_id); else ids.push(g_drag_id);
+        ids.forEach((id, i) => {
+            const movie = g_movies.find(m => m.id === id);
+            if (movie) movie.sort_order = i + 1;
+        });
+        renderMovies(g_movies);
+        api('PUT', '/api/movies/reorder', { order: ids });
+    }
+}
+
 // ---------- Shows — render -----------------------------------------------
 
+// ---------- Main / sub tabs -----------------------------------------------
+
+let g_main_tab  = 'shows';   // 'shows' | 'movies'
+let g_shows_tab = 'current'; // 'current' | 'queued'
+let g_shows     = [];        // last loaded shows, for sub-tab re-render
+let g_movies    = [];        // last loaded movies, for drag reorder
+let g_queues    = [];
+let g_queue_id  = parseInt(localStorage.getItem('fi_queue_id')) || 1;
+
+function switchMainTab(tab) {
+    g_main_tab = tab;
+    document.getElementById('tab-shows').classList.toggle('active', tab === 'shows');
+    document.getElementById('tab-movies').classList.toggle('active', tab === 'movies');
+    document.getElementById('shows-section').classList.toggle('hidden', tab !== 'shows');
+    document.getElementById('movies-section').classList.toggle('hidden', tab !== 'movies');
+}
+
+function switchShowsTab(tab) {
+    g_shows_tab = tab;
+    document.getElementById('subtab-current').classList.toggle('active', tab === 'current');
+    document.getElementById('subtab-queued').classList.toggle('active', tab === 'queued');
+    renderShows(g_shows);
+}
+
 async function loadShows() {
-    const shows = await api('GET', '/api/shows');
+    const shows = await api('GET', `/api/shows?queue_id=${g_queue_id}`);
+    g_shows = shows;
     renderShows(shows);
 }
 
-function showStatusBadge(status) {
-    const map = {
-        watching: ['badge-watching', 'FlickImp'],
-        finished: ['badge-finished', 'Finished'],
-    };
-    const [cls, label] = map[status] ?? map.watching;
-    return `<span class="badge ${cls}">${label}</span>`;
+function showStatusBadge(s) {
+    if (s.status === 'finished')
+        return '<span class="badge badge-finished">Finished</span>';
+    if (s.season === 0)
+        return '<span class="badge badge-notstarted">Not started</span>';
+    if (showHasNew(s))
+        return '';
+    return '<span class="badge badge-caughtup">Caught up</span>';
 }
 
 function showCard(s) {
@@ -143,10 +356,18 @@ function showCard(s) {
     const nextWatchTxt = nextTxt(s).replace(' − ', ' &minus; ');
 
     return `
-    <div class="show-wrap" id="wrap-${s.id}">
+    <div class="show-wrap" id="wrap-${s.id}"
+         draggable="true"
+         ondragstart="itemDragStart(event,'show',${s.id})"
+         ondragend="itemDragEnd(event)"
+         ondragover="itemDragOver(event)"
+         ondragleave="itemDragLeave(event)"
+         ondrop="showDrop(event,${s.id})">
 
       <!-- ── Main card ──────────────────────────────────────────────── -->
       <div class="card" data-id="${s.id}">
+        <div class="drag-handle" onmousedown="dragHandleDown(event)"
+             ontouchstart="dragHandleDown(event)" title="Drag to reorder">&#x2630;</div>
         ${thumbHtml}
         <div class="card-body">
           <div class="card-top">
@@ -154,7 +375,7 @@ function showCard(s) {
               <a class="show-title-link" href="#"
                  onclick="event.preventDefault();openEpisodeView(${s.id},${titleJson})">${esc(s.title)}</a>
             </div>
-            ${showStatusBadge(s.status)}${newBadge}
+            ${showStatusBadge(s)}${newBadge}
           </div>
           ${s.service ? `<div class="card-meta"><span class="service-tag">${esc(s.service)}</span></div>` : ''}
           <div class="ep-track">
@@ -170,6 +391,10 @@ function showCard(s) {
           <div class="card-actions">
             <button class="btn-sm" onclick="toggleEdit(${s.id})">Edit</button>
             <button class="btn-sm" onclick="openCastModal('shows',${s.id},${titleJson})">Cast</button>
+            <button class="btn-sm" onclick="toggleShowQueue(${s.id},'${s.queue}')">
+              ${s.queue === 'queued' ? '→ Current' : '→ Queued'}
+            </button>
+            ${moveToQueueHtml('shows', s.id)}
             <button class="btn-danger" onclick="deleteShow(${s.id})">Remove</button>
           </div>
         </div>
@@ -228,22 +453,32 @@ function showHasNew(s) {
         (s.latest_season === s.season && s.latest_episode > s.episode);
 }
 
-function renderShows(shows) {
-    const list = document.getElementById('shows-list');
-    if (!shows.length) {
-        list.innerHTML = '<div class="empty">No shows yet — add one above.</div>';
-        return;
-    }
+function sortShowArray(arr) {
     const rank = s => {
         if (s.status === 'finished') return 2;
         if (showHasNew(s))           return 0;
         return 1;
     };
-    shows.sort((a, b) => {
+    arr.sort((a, b) => {
+        const so_a = a.sort_order || 999999;
+        const so_b = b.sort_order || 999999;
+        if (so_a !== so_b) return so_a - so_b;
         const d = rank(a) - rank(b);
         return d !== 0 ? d : a.title.localeCompare(b.title);
     });
-    list.innerHTML = shows.map(showCard).join('');
+}
+
+function renderShows(shows) {
+    const list = document.getElementById('shows-list');
+    const filtered = shows.filter(s => (s.queue === 'queued') === (g_shows_tab === 'queued'));
+    if (!filtered.length) {
+        list.innerHTML = g_shows_tab === 'queued'
+            ? '<div class="empty">No queued shows.</div>'
+            : '<div class="empty">No shows yet — add one above.</div>';
+        return;
+    }
+    sortShowArray(filtered);
+    list.innerHTML = filtered.map(showCard).join('');
 }
 
 // ---------- Shows — card actions -----------------------------------------
@@ -251,6 +486,12 @@ function renderShows(shows) {
 async function deleteShow(id) {
     if (!confirm('Remove this show?')) return;
     await api('DELETE', `/api/shows/${id}`);
+    loadShows();
+}
+
+async function toggleShowQueue(id, current) {
+    const next = current === 'queued' ? 'current' : 'queued';
+    await api('PUT', `/api/shows/${id}`, { queue: next });
     loadShows();
 }
 
@@ -329,6 +570,7 @@ async function addShow() {
         imdb_id:       document.getElementById('new-show-imdb').value.trim(),
         tmdb_id:       g_new_show_tmdb_id,
         thumbnail_url: g_new_show_thumb,
+        queue_id:      g_queue_id,
     });
     hideAddShowForm();
     loadShows();
@@ -529,17 +771,19 @@ async function popupMarkWatched(showId, season, episode, watched, seasonTotal = 
 // ---------- Movies --------------------------------------------------------
 
 async function loadMovies() {
-    const movies = await api('GET', '/api/movies');
+    const movies = await api('GET', `/api/movies?queue_id=${g_queue_id}`);
+    g_movies = movies;
     renderMovies(movies);
 }
 
-function movieStatusBadge(status) {
+function movieStatusBadge(id, status) {
     const map = {
         want_to_watch: ['badge-want',    'Want to watch'],
         watched:       ['badge-watched', 'Watched'],
     };
     const [cls, label] = map[status] ?? ['badge-want', status];
-    return `<span class="badge ${cls}">${label}</span>`;
+    return `<span class="badge badge-toggle ${cls}"
+                  onclick="toggleWatched(${id},'${status}')">${label}</span>`;
 }
 
 function movieCard(m) {
@@ -559,7 +803,6 @@ function movieCard(m) {
     const thumbHtml  = (thumbImg && m.imdb_id)
         ? `<a href="https://www.imdb.com/title/${esc(m.imdb_id)}/" target="_blank" rel="noopener">${thumbImg}</a>`
         : thumbImg;
-    const watchedLabel = m.status === 'watched' ? '↩ Unwatch' : '✓ Watched';
     const mTmdbUrl     = m.tmdb_id ? `https://www.themoviedb.org/movie/${m.tmdb_id}` : '';
     const movieTitleHtml = (m.imdb_id || m.tmdb_id)
         ? `<span class="movie-title-link"
@@ -570,24 +813,41 @@ function movieCard(m) {
         : esc(m.title);
 
     return `
+    <div class="movie-wrap" id="mwrap-${m.id}"
+         draggable="true"
+         ondragstart="itemDragStart(event,'movie',${m.id})"
+         ondragend="itemDragEnd(event)"
+         ondragover="itemDragOver(event)"
+         ondragleave="itemDragLeave(event)"
+         ondrop="movieDrop(event,${m.id})">
     <div class="card" data-id="${m.id}">
+      <div class="drag-handle" onmousedown="dragHandleDown(event)"
+           ontouchstart="dragHandleDown(event)" title="Drag to reorder">&#x2630;</div>
       ${thumbHtml}
       <div class="card-body">
       <div class="card-top">
         <div class="card-title">${movieTitleHtml}</div>
-        ${movieStatusBadge(m.status)}
+        ${movieStatusBadge(m.id, m.status)}
       </div>
       ${dateHtml}
       ${notesHtml}
       <div class="card-actions">
-        <button class="btn-watched" onclick="toggleWatched(${m.id},'${m.status}')">
-          ${watchedLabel}
-        </button>
         <button class="btn-sm" onclick="openCastModal('movies',${m.id},${JSON.stringify(m.title).replace(/"/g,'&quot;')})">Cast</button>
+        ${moveToQueueHtml('movies', m.id)}
         <button class="btn-danger" onclick="deleteMovie(${m.id})">Remove</button>
       </div>
       </div>
+    </div>
     </div>`;
+}
+
+function sortMovieArray(arr) {
+    arr.sort((a, b) => {
+        const so_a = a.sort_order || 999999;
+        const so_b = b.sort_order || 999999;
+        if (so_a !== so_b) return so_a - so_b;
+        return a.title.localeCompare(b.title);
+    });
 }
 
 function renderMovies(movies) {
@@ -596,6 +856,7 @@ function renderMovies(movies) {
         list.innerHTML = '<div class="empty">No movies yet — add one above.</div>';
         return;
     }
+    sortMovieArray(movies);
     list.innerHTML = movies.map(movieCard).join('');
 }
 
@@ -642,6 +903,7 @@ async function addMovie() {
         notes:         document.getElementById('new-movie-notes').value.trim(),
         tmdb_id:       g_new_movie_tmdb_id,
         thumbnail_url: g_new_movie_thumb,
+        queue_id:      g_queue_id,
     });
     hideAddMovieForm();
     loadMovies();
@@ -798,6 +1060,27 @@ function castModalClick(event) {
     if (event.target === document.getElementById('cast-modal')) closeCastModal();
 }
 
+// ---------- Zoom ---------------------------------------------------------
+
+const ZOOM_MIN = 0.7, ZOOM_MAX = 1.5, ZOOM_STEP = 0.1;
+let g_zoom = parseFloat(localStorage.getItem('fi_zoom')) || 1;
+applyZoom();
+
+function applyZoom() {
+    document.body.style.zoom = g_zoom;
+    const label = document.getElementById('zoom-label');
+    if (label) label.textContent = Math.round(g_zoom * 100) + '%';
+    updateZoomCols();
+}
+function updateZoomCols() {
+    const ew = window.innerWidth / g_zoom;
+    document.body.classList.toggle('zoom-cols-3', ew >= 1100 && ew < 1500);
+    document.body.classList.toggle('zoom-cols-4', ew >= 1500);
+}
+function zoomIn()  { g_zoom = Math.min(ZOOM_MAX, +(g_zoom + ZOOM_STEP).toFixed(2)); localStorage.setItem('fi_zoom', g_zoom); applyZoom(); }
+function zoomOut() { g_zoom = Math.max(ZOOM_MIN, +(g_zoom - ZOOM_STEP).toFixed(2)); localStorage.setItem('fi_zoom', g_zoom); applyZoom(); }
+window.addEventListener('resize', updateZoomCols);
+
 // ---------- Init ----------------------------------------------------------
 
 // ---------- Header menu ---------------------------------------------------
@@ -918,10 +1201,137 @@ document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && g_ev_show_id) closeEpisodeView();
     if (e.key === 'Escape' && !document.getElementById('about-modal').classList.contains('hidden'))
         closeAboutModal();
+    if (e.key === 'Escape' && !document.getElementById('manage-queues-modal').classList.contains('hidden'))
+        closeManageQueuesModal();
 });
 
-loadShows();
-loadMovies();
+loadQueues().then(() => { loadShows(); loadMovies(); });
+
+// ---------- Queues -------------------------------------------------------
+
+async function loadQueues() {
+    const queues = await api('GET', '/api/queues');
+    if (!Array.isArray(queues)) return;
+    g_queues = queues;
+    if (!queues.find(q => q.id === g_queue_id)) {
+        g_queue_id = queues.length ? queues[0].id : 1;
+        localStorage.setItem('fi_queue_id', g_queue_id);
+    }
+    renderQueueTabs();
+}
+
+function renderQueueTabs() {
+    const container = document.getElementById('queue-tabs');
+    if (!g_queues.length || g_queues.length === 1) {
+        container.innerHTML = '';
+        return;
+    }
+    container.innerHTML = g_queues.map(q =>
+        `<button class="queue-tab-btn${q.id === g_queue_id ? ' active' : ''}"
+                 onclick="selectQueue(${q.id})">${esc(q.name)}</button>`
+    ).join('');
+}
+
+function moveToQueueHtml(type, id) {
+    if (g_queues.length < 2) return '';
+    const others = g_queues.filter(q => q.id !== g_queue_id);
+    const opts = others.map(q =>
+        `<option value="${q.id}">${esc(q.name)}</option>`).join('');
+    return `<select class="btn-sm move-queue-select"
+                    onchange="moveToQueue('${type}',${id},+this.value);this.selectedIndex=0">
+              <option value="" selected disabled>Move to…</option>${opts}
+            </select>`;
+}
+
+async function moveToQueue(type, id, queueId) {
+    await api('PUT', `/api/${type}/${id}`, { queue_id: queueId });
+    loadShows();
+    loadMovies();
+}
+
+function selectQueue(queueId) {
+    g_queue_id = queueId;
+    localStorage.setItem('fi_queue_id', g_queue_id);
+    renderQueueTabs();
+    loadShows();
+    loadMovies();
+}
+
+function openManageQueuesModal() {
+    document.getElementById('menu-dropdown').classList.add('hidden');
+    document.getElementById('manage-queues-modal').classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+    renderManageQueues();
+}
+
+function closeManageQueuesModal() {
+    document.getElementById('manage-queues-modal').classList.add('hidden');
+    document.body.style.overflow = '';
+}
+
+function manageQueuesModalClick(event) {
+    if (event.target === document.getElementById('manage-queues-modal'))
+        closeManageQueuesModal();
+}
+
+function renderManageQueues() {
+    const body = document.getElementById('manage-queues-body');
+    const rows = g_queues.map(q => {
+        const isOnly = g_queues.length <= 1;
+        return `
+        <div class="queue-row" data-id="${q.id}">
+          <input type="text" class="queue-name-input" value="${esc(q.name)}"
+                 onchange="renameQueue(${q.id}, this.value)">
+          <button class="btn-sm" onclick="assignPinPrompt(${q.id})"
+                  title="${q.pin ? 'Change PIN' : 'Assign PIN'}">PIN</button>
+          ${isOnly ? '' : `<button class="btn-danger" onclick="deleteQueue(${q.id})">Delete</button>`}
+        </div>`;
+    }).join('');
+    body.innerHTML = `
+      ${rows}
+      <div class="queue-add-row">
+        <input type="text" id="new-queue-name" placeholder="New queue name..."
+               autocomplete="off"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();addQueue();}">
+        <button class="btn-add" onclick="addQueue()">+ Queue</button>
+      </div>`;
+}
+
+async function addQueue() {
+    const el = document.getElementById('new-queue-name');
+    const name = el.value.trim();
+    if (!name) return;
+    await api('POST', '/api/queues', { name });
+    el.value = '';
+    await loadQueues();
+    renderManageQueues();
+}
+
+async function renameQueue(id, newName) {
+    newName = newName.trim();
+    if (!newName) { renderManageQueues(); return; }
+    await api('PUT', `/api/queues/${id}`, { name: newName });
+    await loadQueues();
+}
+
+async function deleteQueue(id) {
+    if (!confirm('Delete this queue? Its shows and movies will move to the default queue.')) return;
+    await api('DELETE', `/api/queues/${id}`);
+    if (g_queue_id === id) {
+        g_queue_id = g_queues.length ? g_queues[0].id : 1;
+        localStorage.setItem('fi_queue_id', g_queue_id);
+    }
+    await loadQueues();
+    renderManageQueues();
+    loadShows();
+    loadMovies();
+}
+
+function assignPinPrompt(id) {
+    const pin = prompt('Enter PIN for this queue (leave blank to remove):');
+    if (pin === null) return;
+    api('PUT', `/api/queues/${id}`, { pin: pin.trim() });
+}
 
 // ---------- About modal ---------------------------------------------------
 
