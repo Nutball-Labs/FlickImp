@@ -1,0 +1,7 @@
+{
+  "name": "flickimp",
+  "description": "Windows build dependencies (used only when configuring with the vcpkg toolchain; Linux/macOS use system libcurl)",
+  "dependencies": [
+    "curl"
+  ]
+}

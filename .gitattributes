@@ -1,0 +1,7 @@
+# Line endings for cross-platform checkouts (Linux / macOS / Windows)
+*.sh    text eol=lf
+*.ps1   text eol=crlf
+*.cmd   text eol=crlf
+*.txt   text
+*.png   binary
+*.ico   binary

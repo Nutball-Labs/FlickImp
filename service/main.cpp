@@ -14,6 +14,7 @@
 #include <string>
 #include <thread>
 #include <chrono>
+#include <cstdio>
 
 namespace fs = std::filesystem;
 
@@ -119,6 +120,7 @@ int main(int argc, char* argv[]) {
     int port = cfg.port;
     std::string web_root = cfg.fi_web_root;
     bool check_mode = false;
+    std::string log_file;
 
     // Initialise TMDB scraper (must happen before any Scraper:: calls)
     FlickImp::Scraper::init(cfg.tmdb_api_key, cfg.tmdb_bearer_token);
@@ -129,6 +131,8 @@ int main(int argc, char* argv[]) {
             port = std::stoi(argv[++i]);
         } else if ((arg == "--web" || arg == "-w") && i + 1 < argc) {
             web_root = argv[++i];
+        } else if ((arg == "--log" || arg == "-l") && i + 1 < argc) {
+            log_file = argv[++i];
         } else if (arg == "--check" || arg == "-c") {
             check_mode = true;
         } else if (arg == "--version" || arg == "-v") {
@@ -139,10 +143,22 @@ int main(int argc, char* argv[]) {
                 "Usage: flickimp [OPTIONS]\n"
                 "  --port N     HTTP port for the web interface (default: 8647)\n"
                 "  --web DIR    Web assets directory\n"
+                "  --log FILE   Append stdout/stderr to FILE (for launchd / Task Scheduler)\n"
                 "  --check      Check IMDB for new episodes on all tracked shows, then exit\n"
                 "  --version    Print version and exit\n";
             return 0;
         }
+    }
+
+    // Background launchers (launchd, Task Scheduler) have no terminal —
+    // redirect output to a file, unbuffered so log lines appear immediately.
+    if (!log_file.empty()) {
+        if (!std::freopen(log_file.c_str(), "a", stdout) ||
+            !std::freopen(log_file.c_str(), "a", stderr)) {
+            return 1;
+        }
+        std::setvbuf(stdout, nullptr, _IONBF, 0);
+        std::setvbuf(stderr, nullptr, _IONBF, 0);
     }
 
     std::string db_path = cfg.fi_db_path.empty()
@@ -160,13 +176,14 @@ int main(int argc, char* argv[]) {
 
     // Normal mode: start the HTTP server
     if (web_root.empty()) {
-        // 1. Next to the binary (dev / in-place run from build dir)
-        std::string bin_dir = fs::weakly_canonical(fs::path(argv[0])).parent_path().string();
-        if (fs::exists(bin_dir + "/web"))
-            web_root = bin_dir + "/web";
+        // 1. Next to the binary — dev build dir, and the Windows/macOS
+        //    install layout (flickimp[.exe] + web/ in one directory)
+        fs::path bin_web = fs::path(FlickImp::Platform::exe_dir()) / "web";
+        if (fs::exists(bin_web))
+            web_root = bin_web.string();
         // 2. Platform data dir — /var/lib/flickimp/web (system) or XDG (dev user)
         else
-            web_root = FlickImp::Platform::data_dir() + "/web";
+            web_root = (fs::path(FlickImp::Platform::data_dir()) / "web").string();
     }
 
     try {
@@ -185,4 +202,4 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
-// SN: 00003
+// SN: 00005

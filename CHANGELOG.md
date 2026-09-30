@@ -5,6 +5,34 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [1.5.0] — 2026-09-30
+
+### Added
+- **Windows package** — `flickimp-X.Y.Z-win64.zip`; `install.cmd` installs per-user to `%LOCALAPPDATA%\Programs\FlickImp` with no admin rights, prompts for TMDB token and port on first install, registers a hidden Task Scheduler logon task, and adds a Start Menu shortcut; `uninstall.cmd` removes it and keeps data unless `-Purge` is passed
+- **macOS package** — `flickimp-X.Y.Z-macOS.{zip,tar.gz}`, universal (Apple Silicon + Intel), macOS 11+; `install.sh` installs per-user to `~/Library/Application Support/flickimp/app` with no sudo, clears the Gatekeeper quarantine flag, and registers a launchd LaunchAgent; `uninstall.sh [--purge]`
+- **`--log FILE`** — appends daemon output to a file, unbuffered; used by the Windows and macOS autostart
+- **Windows and macOS build scripts** — `build-/package-/Go-` scripts for both platforms; Windows gets libcurl from vcpkg manifest mode (`vcpkg.json`, static triplet), and the build scripts fetch `third_party/` automatically if it's missing
+
+### Changed
+- **Web root discovery** — the daemon locates `web/` via the real executable path (`/proc/self/exe`, `_NSGetExecutablePath`, `GetModuleFileName`) instead of `argv[0]`, which was unreliable under PATH lookup, launchd and Task Scheduler
+- **CMake** — MSVC static CRT, `/utf-8 /bigobj`; macOS deployment target 11.0; install layout and CPack generators chosen per platform (RPM/DEB/TGZ, ZIP, TGZ+ZIP)
+- **`.gitattributes`** — enforces LF for `.sh` and CRLF for `.ps1`/`.cmd`, so checkouts work on every platform
+
+---
+
+## [1.1.0 – 1.4.3] — 2026-05 to 2026-09
+
+Shipped as Linux packages only. The source was committed together at 1.4.3.
+
+### Added
+- **Named queues** — `queues` table, `/api/queues` CRUD, a ☰ → Manage Queues modal, and queue tabs across the top of the main page
+- **Shows / Movies tabs** — separate main tabs; shows also have **Current / Queued** sub-tabs
+- **Drag-to-reorder** — cards can be dragged into a custom order; persisted through `sort_order` (`PUT /api/shows/reorder`, `PUT /api/movies/reorder`)
+- **Zoom control** — − / % / + in the ☰ menu
+- **PWA manifest + icons** — FlickImp can be added to a phone or tablet home screen
+
+---
+
 ## [1.0.0] — 2026-05-24
 
 ### Added
@@ -78,4 +106,4 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 - systemd service unit and install script
 - Qt6 configurator (`flickimp-config`) for service control and port/API-key settings
 
-<!-- SN: 00004 -->
+<!-- SN: 00005 -->

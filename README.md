@@ -37,61 +37,121 @@ See [screenshots/Screenshots.md](screenshots/Screenshots.md) for the full set �
 
 ---
 
-## Requirements
+## Installing
 
-**Platform:** Linux (x86_64) — primary. macOS and Windows builds are in progress for v1.0.
-Primary development and testing on Alma Linux 9.x / RHEL 9; other Linux distributions should work but are not regularly tested.
+Download the package for your platform from the
+[latest release](https://github.com/Nutball-Labs/FlickImp/releases/latest).
+You'll need a free TMDB API Read Access Token from
+<https://www.themoviedb.org/settings/api>.
 
-**Build dependencies:**
+| Platform | Package | Install |
+|---|---|---|
+| Alma / RHEL / Fedora | `flickimp-X.Y.Z-1.x86_64.rpm` | `sudo dnf install ./flickimp-*.rpm` — runs as a systemd service; configure with `flickimp-config` |
+| Debian / Ubuntu | `flickimp_X.Y.Z_amd64.deb` | `sudo apt install ./flickimp_*.deb` |
+| Windows 10 / 11 (x64) | `flickimp-X.Y.Z-win64.zip` | Extract, double-click `install.cmd` — per-user, starts at logon, no admin needed |
+| macOS 11+ (Apple Silicon + Intel) | `flickimp-X.Y.Z-macOS.zip` / `.tar.gz` | Unpack, run `./install.sh` in Terminal — per-user, starts at login, no sudo needed |
 
-- g++ with C++17 support (GCC 11+ recommended)
-- CMake 3.16+
-- libcurl development headers
+Then browse to `http://localhost:8647`.
 
-Install on Alma / RHEL:
-
-```bash
-sudo dnf install cmake gcc-c++ libcurl-devel
-```
-
-**Vendored dependencies** (fetched automatically by `get-deps.sh`):
-
-- SQLite amalgamation
-- [cpp-httplib](https://github.com/yhirose/cpp-httplib)
-- [nlohmann/json](https://github.com/nlohmann/json)
+The Windows and macOS builds are unsigned: expect a SmartScreen "More info → Run anyway"
+prompt on Windows. On macOS, `install.sh` clears the download quarantine flag.
+See `README-Windows.txt` / `README-macOS.txt` inside each package for file locations,
+upgrading and uninstalling.
 
 ---
 
 ## Building from Source
 
+All platforms share the vendored dependencies, which are fetched by `get-deps.sh` / `get-deps.ps1`
+(the build scripts run these automatically if `third_party/` is missing):
+
+- SQLite amalgamation
+- [cpp-httplib](https://github.com/yhirose/cpp-httplib)
+- [nlohmann/json](https://github.com/nlohmann/json)
+
+Each platform has `build-*`, `package-*` and `Go-*` (build + package, with sleep inhibited)
+scripts in `scripts/`. Packages land in `packages/`.
+
+### Linux (Alma / RHEL 9 — primary)
+
 ```bash
-git clone git@github.com:Nutball-Labs/FlickImp.git
-cd FlickImp
-./scripts/get-deps.sh        # fetch vendored third-party headers
-./scripts/build-linux.sh     # configure + build
+sudo dnf install cmake gcc-c++ libcurl-devel rpm-build   # + qt6-qtbase-devel for flickimp-config
+git clone git@github.com:Nutball-Labs/FlickImp.git && cd FlickImp
+./scripts/get-deps.sh
+./scripts/build-linux.sh        # → build-linux/flickimp
+./scripts/package-linux.sh      # → RPM, DEB, TGZ
 ```
 
-The `flickimp` daemon binary lands in `build-linux/`.
+### macOS 11+
+
+```bash
+xcode-select --install          # Apple clang + SDK; libcurl ships with macOS
+brew install cmake
+git clone git@github.com:Nutball-Labs/FlickImp.git && cd FlickImp
+./scripts/Go-MacOS.sh           # build (universal arm64 + x86_64) + package → TGZ, ZIP
+```
+
+`./scripts/build-macos.sh --native` builds for the host architecture only (faster when you're iterating).
+
+### Windows 10 / 11 (x64)
+
+One-time toolchain setup, in PowerShell:
+
+```powershell
+winget install Microsoft.VisualStudio.2022.BuildTools Kitware.CMake Git.Git
+#   → in Visual Studio Installer, tick "Desktop development with C++"
+git clone https://github.com/microsoft/vcpkg C:\vcpkg
+C:\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+[Environment]::SetEnvironmentVariable("VCPKG_ROOT", "C:\vcpkg", "User")
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Then, in a new terminal:
+
+```powershell
+git clone git@github.com:Nutball-Labs/FlickImp.git; cd FlickImp
+.\scripts\Go-windows.ps1        # build + package → packages\flickimp-X.Y.Z-win64.zip
+```
+
+libcurl comes from `vcpkg.json` (manifest mode) as a static library. The first configure builds it,
+which takes a few minutes; later configures use the cache.
 
 ---
 
 ## Usage
 
-Start the daemon:
+Start the daemon from a build tree:
 
 ```bash
-./build-linux/flickimp --port 8647 --web ./web
+./build-linux/flickimp          # finds web/ next to the binary
 ```
 
 Then open `http://localhost:8647` in your browser.
 
-Configuration is read from `/etc/flickimp/fi_config.json` when running as a system service (UID < 1000), or `~/.config/flickimp/fi_config.json` for local development. Use `flickimp-config` to set the port and TMDB credentials.
+| Option | Meaning |
+|---|---|
+| `--port N` | HTTP port (default 8647, or `port` in `fi_config.json`) |
+| `--web DIR` | Web assets directory (default: `web/` next to the binary) |
+| `--log FILE` | Append output to FILE (used by the Windows/macOS autostart) |
+| `--check` | Check TMDB for new episodes on all tracked shows, then exit |
+| `--version` | Print version and exit |
+
+`fi_config.json` holds the port and TMDB credentials. Its location depends on the platform:
+
+| Platform | Config + database |
+|---|---|
+| Linux system service | `/etc/flickimp/fi_config.json`, `/var/lib/flickimp/db/` — use `flickimp-config` |
+| Linux developer run | `~/.config/flickimp/`, `~/.local/share/flickimp/db/` |
+| Windows | `%APPDATA%\flickimp\` |
+| macOS | `~/Library/Application Support/flickimp/` |
 
 ---
 
 ## Project Status
 
-**v1.0.0 — Initial public release.** HTTP daemon, web UI, episode browser, cast with IMDB/TMDB links, About modal, TMDB integration, and Qt6 configurator are all functional. macOS and Windows builds coming soon.
+**v1.5.0 — Windows and macOS packages.** The HTTP daemon and web UI (queues, episode browser, cast,
+TMDB/IMDB links) run on Linux, Windows and macOS. The Qt configurator `flickimp-config` is Linux-only.
+On Windows and macOS, the installer handles first-time configuration.
 
 ---
 
@@ -111,5 +171,5 @@ feature decisions, and real-world testing are entirely human-driven.
 GNU General Public License v3 — see [LICENSE](LICENSE).
 Copyright (C) 2026 Nutball Labs / Stephen Berg
 
-<!-- SN: 00004 -->
+<!-- SN: 00005 -->
 

@@ -11,7 +11,7 @@ for working on the FlickImp project. Read this before touching any code.
 **FlickImp** is [BRIEF DESCRIPTION — one sentence].
 Private GitHub repo at https://github.com/Nutball-Labs/FlickImp — all work on `main` branch.
 
-**Current version:** 1.0.0 (SN 00004)
+**Current version:** 1.5.0 (SN 00005)
 **Config file:** `/etc/flickimp/fi_config.json` (system service) · `~/.config/flickimp/fi_config.json` (dev user)
 **Build system:** CMake
 
@@ -70,6 +70,20 @@ experience — don't over-explain Linux basics. Does need help with C++ idioms.
 | `web/style.css` | Dark theme styles |
 | `web/app.js` | Vanilla JS — fetch API, render shows/movies tables, add/delete/update |
 
+### Windows / macOS packaging (`packaging/`) — end-user installers shipped inside the zip / tgz
+
+| File | Role |
+|---|---|
+| `packaging/windows/install.ps1` + `install.cmd` | Per-user install to `%LOCALAPPDATA%\Programs\FlickImp`; first-run config prompt; hidden Task Scheduler logon task (`conhost --headless … --log`); Start Menu `.url` |
+| `packaging/windows/uninstall.ps1` + `uninstall.cmd` | Removes task, shortcut, and program dir; `-Purge` also deletes `%APPDATA%\flickimp` |
+| `packaging/macos/install.sh` | Per-user install to `~/Library/Application Support/flickimp/app`; clears quarantine; writes and bootstraps the `com.nutball-labs.flickimp` LaunchAgent |
+| `packaging/macos/uninstall.sh` | `launchctl bootout`, removes plist + app dir; `--purge` deletes data |
+| `vcpkg.json` | Windows-only libcurl dependency (manifest mode, `x64-windows-static`) |
+
+Windows/macOS use a **per-user** model (no service account); Linux keeps the systemd system-service model.
+The Qt configurator is Linux-only. Build scripts: `scripts/{build,package,Go}-{macos.sh,windows.ps1}`.
+Windows `.ps1`/`.cmd` files must stay **pure ASCII**, because PowerShell 5.1 misreads UTF-8 without a BOM.
+
 ### Third-party (vendored, not committed)
 
 | Dep | File(s) | Fetched by |
@@ -91,7 +105,7 @@ Every source file carries a serial number comment at the bottom of the file:
 ```
 
 **Rules:**
-- There is one project-wide **high-water mark** SN, currently `00004`
+- There is one project-wide **high-water mark** SN, currently `00005`
 - When files are modified in a build/fix session, bump their SN to the
   current high-water mark
 - When cutting a new release, increment the high-water mark by 1 and apply
@@ -162,6 +176,9 @@ Run before first build: `sudo dnf install libcurl-devel && ./scripts/get-deps.sh
 - **Add "Watching" and "Want to Watch" queue types to categorize shows/movies by watch intent**
 
 ## Completed
+
+- **Windows + macOS packages (v1.5.0)** — per-user installers (Task Scheduler / launchd autostart), `--log FILE`, `Platform::exe_dir()` for web-root discovery, per-platform CPack (win64 ZIP; macOS universal TGZ+ZIP), vcpkg manifest for Windows curl
+- **Named queues, Shows/Movies tabs, Current/Queued sub-tabs, drag-to-reorder, zoom, PWA manifest (v1.1.0–1.4.3)**
 
 - **systemd service unit** — `flickimp.service` ships with the project; runs as dedicated `flickimp` user; no env file; reads all config from `fi_config.json` on startup
 - **flickimp-gui (`flickimp-config`)** — Qt6 service control app; manages start/stop/restart/boot-enable and exposes port + TMDB credentials (API Key and Bearer Token)
@@ -251,4 +268,4 @@ Use the `/postit` slash command to record an idea without acting on it. It write
 - **Phase 5 (Season/episode picker):** Complete — modal popup with colour-coded season list and per-episode watched checkboxes
 - All work on `main` branch
 
-<!-- SN: 00002 -->
+<!-- SN: 00005 -->

@@ -3,7 +3,17 @@
 #include "platform.hpp"
 #include <cstdlib>
 #include <filesystem>
-#if !defined(_WIN32) && !defined(__APPLE__)
+#if defined(_WIN32)
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
+#elif defined(__APPLE__)
+#  include <mach-o/dyld.h>
+#else
 #  include <unistd.h>
 #endif
 
@@ -110,6 +120,37 @@ std::string db_path() {
 
 #endif
 
+// -------------------------------------------------------------------------
+// exe_dir() — all platforms. argv[0] is unreliable (PATH lookup, launchd,
+// Task Scheduler), so ask the OS for the real executable path instead.
+// Falls back to the current directory if the lookup fails.
+// -------------------------------------------------------------------------
+std::string exe_dir() {
+    fs::path p;
+#if defined(_WIN32)
+    wchar_t buf[MAX_PATH * 4];
+    DWORD n = GetModuleFileNameW(nullptr, buf, sizeof(buf) / sizeof(buf[0]));
+    if (n > 0 && n < sizeof(buf) / sizeof(buf[0]))
+        p = fs::path(std::wstring(buf, n));
+#elif defined(__APPLE__)
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);   // returns required size
+    std::string buf(size, '\0');
+    if (_NSGetExecutablePath(buf.data(), &size) == 0)
+        p = fs::path(buf.c_str());
+#else
+    std::error_code ec;
+    p = fs::read_symlink("/proc/self/exe", ec);
+    if (ec) p.clear();
+#endif
+    if (p.empty())
+        return fs::current_path().string();
+
+    std::error_code ec_canon;
+    fs::path canon = fs::weakly_canonical(p, ec_canon);
+    return (ec_canon ? p : canon).parent_path().string();
+}
+
 } // namespace FlickImp::Platform
 
-// SN: 00003
+// SN: 00005

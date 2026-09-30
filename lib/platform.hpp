@@ -8,7 +8,8 @@ namespace FlickImp::Platform {
 std::string config_dir();  // ~/.config/flickimp/
 std::string data_dir();    // ~/.local/share/flickimp/
 std::string db_path();     // data_dir() + "flickimp.db"
+std::string exe_dir();     // directory containing the running executable
 
 } // namespace FlickImp::Platform
 
-// SN: 00001
+// SN: 00005

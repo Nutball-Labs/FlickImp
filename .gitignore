@@ -39,3 +39,12 @@ sn_audit.txt
 # Claude Code machine-local settings (create .claude/settings.local.json as a symlink
 # to .claude/settings.<machine>.json, or copy one as a starting point)
 .claude/settings.local.json
+
+# Vendored deps (fetched by scripts/get-deps.sh / get-deps.ps1)
+third_party/
+
+# vcpkg manifest-mode output (Windows)
+vcpkg_installed/
+
+# Backups
+*.bak

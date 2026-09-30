@@ -5,8 +5,9 @@
 # Usage:
 #   ./scripts/Go-MacOS.sh              -- configure + build + package
 #   ./scripts/Go-MacOS.sh --clean      -- wipe build dir first, then build + package
+#   ./scripts/Go-MacOS.sh --native     -- this Mac's architecture only (default: universal)
 #
-# --clean is forwarded to build-macos.sh.
+# --clean and --native are forwarded to build-macos.sh.
 #
 # caffeinate is held via a background PID and a trap so it is always released —
 # on normal exit, on build/package failure, and on Ctrl+C.
@@ -32,10 +33,10 @@ trap cleanup EXIT
 echo "[Go] Sleep/hibernate inhibited for build duration (caffeinate PID $CAFF_PID)."
 
 # ── Args ───────────────────────────────────────────────────────────────────────
-CLEAN_ARG=""
+BUILD_ARGS=()
 for arg in "$@"; do
     case "$arg" in
-        --clean) CLEAN_ARG="--clean" ;;
+        --clean|--native) BUILD_ARGS+=("$arg") ;;
         *) echo "[Go] Unknown argument: $arg" >&2; exit 1 ;;
     esac
 done
@@ -47,7 +48,7 @@ echo ""
 echo "[Go] === Phase 1: Build ==="
 
 set +e
-"$SCRIPTS/build-macos.sh" $CLEAN_ARG
+"$SCRIPTS/build-macos.sh" ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"}
 BUILD_EXIT=$?
 set -e
 
@@ -75,4 +76,4 @@ fi
 echo ""
 echo "[Go] Pipeline complete."
 
-# SN: 00001
+# SN: 00005
