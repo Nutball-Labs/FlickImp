@@ -48,3 +48,6 @@ vcpkg_installed/
 
 # Backups
 *.bak
+data/
+*.tar.gz
+fi_config.json

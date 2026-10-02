@@ -1,0 +1,10 @@
+services:
+  flickimp:
+    image: flickimp:latest
+    container_name: flickimp
+    restart: unless-stopped
+    ports:
+      - "8647:8647"
+    volumes:
+      - ./data/config:/home/appuser/.config/flickimp
+      - ./data/db:/home/appuser/.local/share/flickimp/db

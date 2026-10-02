@@ -1,0 +1,6 @@
+.git
+build-linux
+packages
+*.rpm
+*.deb
+*.tar.gz
