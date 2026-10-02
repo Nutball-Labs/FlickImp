@@ -314,8 +314,17 @@ function switchMainTab(tab) {
     g_main_tab = tab;
     document.getElementById('tab-shows').classList.toggle('active', tab === 'shows');
     document.getElementById('tab-movies').classList.toggle('active', tab === 'movies');
+    const calTab = document.getElementById('tab-calendar');
+    if (calTab) calTab.classList.toggle('active', tab === 'calendar');
+
     document.getElementById('shows-section').classList.toggle('hidden', tab !== 'shows');
     document.getElementById('movies-section').classList.toggle('hidden', tab !== 'movies');
+    const calSec = document.getElementById('calendar-section');
+    if (calSec) calSec.classList.toggle('hidden', tab !== 'calendar');
+
+    if (tab === 'calendar') {
+        loadCalendar(true);
+    }
 }
 
 function switchShowsTab(tab) {
@@ -1367,4 +1376,143 @@ function aboutModalOverlayClick(e) {
     if (e.target === document.getElementById('about-modal')) closeAboutModal();
 }
 
+// ===== Release Calendar Module =====
+let g_cal_date = new Date();
+let g_cal_cache = null;
+
+function navigateCalendar(deltaMonths) {
+    g_cal_date.setMonth(g_cal_date.getMonth() + deltaMonths);
+    renderCalendarGrid();
+}
+
+function resetCalendarToday() {
+    g_cal_date = new Date();
+    renderCalendarGrid();
+}
+
+async function loadCalendar(force = false) {
+    const grid = document.getElementById('calendar-grid');
+    if (!grid) return;
+    if (g_cal_cache && !force) {
+        renderCalendarGrid();
+        return;
+    }
+    grid.innerHTML = '<div class="empty">Loading release schedules…</div>';
+
+    try {
+        const [shows, movies] = await Promise.all([
+            api('GET', `/api/shows?queue_id=${g_queue_id}`),
+            api('GET', `/api/movies?queue_id=${g_queue_id}`)
+        ]);
+
+        // Option 1: Filter to active shows (current)
+        const currentShows = (Array.isArray(shows) ? shows : []).filter(s => s.queue === 'current');
+
+        // Fetch episodes for current seasons concurrently
+        const showEpisodePromises = currentShows.map(async s => {
+            try {
+                const targetSeason = s.next_season || s.season || 1;
+                const episodes = await api('GET', `/api/shows/${s.id}/episodes?season=${targetSeason}`);
+                if (!Array.isArray(episodes)) return [];
+                return episodes
+                    .filter(ep => ep.air_date)
+                    .map(ep => ({
+                        type: 'show',
+                        title: s.title,
+                        subtitle: `S${ep.season}E${String(ep.episode).padStart(2, '0')}${ep.title ? ' - ' + ep.title : ''}`,
+                        date: ep.air_date,
+                        watched: ep.watched
+                    }));
+            } catch (err) {
+                return [];
+            }
+        });
+
+        const showResults = await Promise.all(showEpisodePromises);
+        const allShowEvents = showResults.flat();
+
+        const movieEvents = (Array.isArray(movies) ? movies : [])
+            .filter(m => m.release_date && m.status !== 'watched')
+            .map(m => ({
+                type: 'movie',
+                title: m.title,
+                subtitle: 'Movie Release',
+                date: m.release_date,
+                watched: false
+            }));
+
+        g_cal_cache = [...allShowEvents, ...movieEvents];
+        renderCalendarGrid();
+    } catch (err) {
+        console.error('Failed to load calendar data', err);
+        grid.innerHTML = '<div class="empty">Error loading calendar schedules.</div>';
+    }
+}
+
+function renderCalendarGrid() {
+    const grid = document.getElementById('calendar-grid');
+    const label = document.getElementById('calendar-month-label');
+    if (!grid) return;
+
+    const year = g_cal_date.getFullYear();
+    const month = g_cal_date.getMonth();
+
+    const monthNames = [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    ];
+    if (label) label.textContent = `${monthNames[month]} ${year}`;
+
+    const firstDayIndex = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const prevDaysInMonth = new Date(year, month, 0).getDate();
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const dayHeaders = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    let html = '<div class="calendar-header-row">';
+    dayHeaders.forEach(day => {
+        html += `<div class="calendar-day-header">${day}</div>`;
+    });
+    html += '</div><div class="calendar-days-grid">';
+
+    // Leading days from previous month
+    for (let i = firstDayIndex - 1; i >= 0; i--) {
+        const d = prevDaysInMonth - i;
+        html += `<div class="calendar-day other-month"><span class="day-number">${d}</span></div>`;
+    }
+
+    // Days in current month
+    for (let day = 1; day <= daysInMonth; day++) {
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const isToday = dateStr === todayStr;
+        const events = (g_cal_cache || []).filter(e => e.date === dateStr);
+
+        html += `
+        <div class="calendar-day${isToday ? ' today' : ''}">
+            <div class="day-top"><span class="day-number">${day}</span></div>
+            <div class="day-events">
+                ${events.map(ev => `
+                    <div class="cal-event ${ev.type}${ev.watched ? ' watched' : ''}" title="${esc(ev.title)}:${esc(ev.subtitle)}">
+                        <span class="event-tag">${ev.type === 'movie' ? '🎬' : '📺'}</span>
+                        <div class="event-details">
+                            <span class="event-title">${esc(ev.title)}</span>
+                            <span class="event-sub">${esc(ev.subtitle)}</span>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        </div>`;
+    }
+
+    // Trailing days into next month to complete row of 7
+    const totalCells = firstDayIndex + daysInMonth;
+    const trailingDays = (7 - (totalCells % 7)) % 7;
+    for (let day = 1; day <= trailingDays; day++) {
+        html += `<div class="calendar-day other-month"><span class="day-number">${day}</span></div>`;
+    }
+
+    html += '</div>';
+    grid.innerHTML = html;
+}
 // SN: 00004

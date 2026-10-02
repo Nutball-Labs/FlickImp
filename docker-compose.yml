@@ -8,3 +8,4 @@ services:
     volumes:
       - ./data/config:/home/appuser/.config/flickimp
       - ./data/db:/home/appuser/.local/share/flickimp/db
+      - ./web:/app/web

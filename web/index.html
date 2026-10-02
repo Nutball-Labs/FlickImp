@@ -39,6 +39,7 @@
   <div class="main-tabs">
     <button class="tab-btn active" id="tab-shows"  onclick="switchMainTab('shows')">Shows</button>
     <button class="tab-btn"        id="tab-movies" onclick="switchMainTab('movies')">Movies</button>
+    <button class="tab-btn"        id="tab-calendar" onclick="switchMainTab('calendar')">Calendar</button>
   </div>
 
   <!-- ===== Shows ===== -->
@@ -75,7 +76,22 @@
     </div>
 
   </section>
-
+<!-- ===== Calendar ===== -->
+  <section id="calendar-section" class="hidden">
+    <div class="section-header">
+      <h2>Release Calendar</h2>
+      <div class="calendar-controls">
+        <button class="btn-subtle" onclick="navigateCalendar(-1)">&larr; Prev</button>
+        <span id="calendar-month-label" class="calendar-month-label"></span>
+        <button class="btn-subtle" onclick="navigateCalendar(1)">Next &rarr;</button>
+        <button class="btn-subtle" onclick="resetCalendarToday()">Today</button>
+        <button class="btn-subtle" onclick="loadCalendar(true)" title="Refresh Calendar">&#x21bb; Refresh</button>
+      </div>
+    </div>
+    <div id="calendar-grid" class="calendar-grid">
+      <div class="empty">Loading calendar...</div>
+    </div>
+  </section>
 </main>
 
 <!-- ===== Episode browser view ===== -->
