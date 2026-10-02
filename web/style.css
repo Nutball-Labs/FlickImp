@@ -1291,8 +1291,14 @@ span.cast-name {
     font-size: 0.75rem;
     background: #282c34;
     border-left: 3px solid #61afef;
-    cursor: default;
+    cursor: pointer;
+    transition: transform 0.15s ease, filter 0.15s ease;
     line-height: 1.2;
+}
+
+.cal-event:hover {
+    filter: brightness(1.15);
+    transform: translateY(-1px);
 }
 
 .cal-event.movie {

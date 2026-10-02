@@ -1418,6 +1418,7 @@ async function loadCalendar(force = false) {
                     .filter(ep => ep.air_date)
                     .map(ep => ({
                         type: 'show',
+                        id: s.id,
                         title: s.title,
                         subtitle: `S${ep.season}E${String(ep.episode).padStart(2, '0')}${ep.title ? ' - ' + ep.title : ''}`,
                         date: ep.air_date,
@@ -1435,6 +1436,7 @@ async function loadCalendar(force = false) {
             .filter(m => m.release_date && m.status !== 'watched')
             .map(m => ({
                 type: 'movie',
+                id: m.id,
                 title: m.title,
                 subtitle: 'Movie Release',
                 date: m.release_date,
@@ -1493,7 +1495,9 @@ function renderCalendarGrid() {
             <div class="day-top"><span class="day-number">${day}</span></div>
             <div class="day-events">
                 ${events.map(ev => `
-                    <div class="cal-event ${ev.type}${ev.watched ? ' watched' : ''}" title="${esc(ev.title)}:${esc(ev.subtitle)}">
+                    <div class="cal-event ${ev.type}${ev.watched ? ' watched' : ''}" 
+                         title="${esc(ev.title)}:${esc(ev.subtitle)}"
+                         onclick="${ev.type === 'show' ? `openEpisodeView(${ev.id}, '${esc(ev.title).replace(/'/g, "\\'")}')` : `switchMainTab('movies')`}">
                         <span class="event-tag">${ev.type === 'movie' ? '🎬' : '📺'}</span>
                         <div class="event-details">
                             <span class="event-title">${esc(ev.title)}</span>
