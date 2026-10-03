@@ -8,8 +8,13 @@
 
 namespace FlickImp::Scraper {
 
-// Call once at startup. Bearer token is preferred; API key is the v3 fallback.
+// Set TMDB credentials. Bearer token is preferred; API key is the v3 fallback.
+// Called at startup and again whenever Settings change; thread-safe.
 void init(const std::string& api_key, const std::string& bearer_token = {});
+
+// Check credentials against TMDB without changing the active ones.
+// Returns an empty string on success, otherwise a human-readable error.
+std::string test_credentials(const std::string& api_key, const std::string& bearer_token);
 
 struct EpisodeInfo {
     int         season{0};
@@ -37,8 +42,9 @@ struct EpisodeEntry {
 };
 
 struct SeasonSummary {
-    int season_number{0};
-    int episode_count{0};
+    int         season_number{0};
+    int         episode_count{0};
+    std::string air_date;      // season premiere "YYYY-MM-DD" or ""
 };
 
 struct MovieInfo {
@@ -51,8 +57,18 @@ struct MovieInfo {
 struct SearchResult {
     int         tmdb_id{0};
     std::string title;
-    std::string year;        // "2023" or ""
+    std::string year;            // "2023" or ""
+    std::string first_air_date;  // "YYYY-MM-DD" or "" (TV results only)
     std::string poster_url;
+};
+
+// Everything needed to mark a show "caught up", from one /tv/{id} call
+struct AiredSummary {
+    std::string                first_air_date;   // "YYYY-MM-DD" or ""
+    bool                       ended{false};     // TMDB status Ended / Canceled
+    std::vector<SeasonSummary> seasons;          // season 0 (specials) excluded
+    EpisodeInfo                last_aired;       // season == 0 if nothing has aired
+    EpisodeInfo                next_to_air;      // season == 0 if none scheduled
 };
 
 // Fetch show metadata from TMDB using an IMDB tt-number or full IMDB URL.
@@ -60,6 +76,9 @@ std::optional<ShowInfo> fetch_show_info(const std::string& imdb_id);
 
 // Fetch the list of seasons with episode counts for a show by TMDB ID.
 std::vector<SeasonSummary> fetch_show_seasons(int tmdb_show_id);
+
+// Season list + last/next aired episode in a single TMDB request.
+std::optional<AiredSummary> fetch_aired_summary(int tmdb_show_id);
 
 // Fetch all episodes for a season. Requires the cached TMDB show ID.
 std::vector<EpisodeEntry> fetch_season_episodes(int tmdb_show_id, int season);
@@ -100,4 +119,4 @@ std::string fetch_episode_title(int tmdb_show_id, int season, int episode);
 
 } // namespace FlickImp::Scraper
 
-// SN: 00004
+// SN: 00006

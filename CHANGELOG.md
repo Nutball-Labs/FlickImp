@@ -5,6 +5,39 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [1.7.0] — 2026-10-03
+
+First release since 1.5.0 (1.6.x were local test builds only). The release
+calendar and Docker support started as pull requests #2 and #1 from
+[@tomcannan](https://github.com/tomcannan), reworked during review. Thanks!
+
+### Added
+- **Release calendar** — a Calendar tab showing a month of air dates for your current shows and release dates for your movies; Prev / Next / Today navigation; show entries open the episode browser; on a phone the grid collapses to a list of days with releases
+- **Docker support** — multi-stage `Dockerfile` (AlmaLinux 9) and `docker-compose.yml` with config and database in `./data/`; see the new Docker section in the README
+- **Settings dialog** — ☰ → Settings: TMDB token and API key (shown masked, with a Test connection button), web port, and per-browser display options (zoom, which tab opens at startup, which queue to start in). Values saved here override `fi_config.json`, so they work even when the config file is read-only (Linux service); `--port` on the command line still wins
+- **Backup / Restore** — ☰ → Backup / Restore downloads everything as a compressed `.json.gz`, with or without the TMDB cache (both sizes shown). Restore can **Merge** (add what's missing) or **Replace** (load the backup exactly); before a restore the current database is copied to `flickimp.db.pre-restore`
+- **Show groups** — link several shows so they appear as one (Doctor Who 1963 / 2005 / 2023, the Jeopardy family). Link from a show's Edit panel; the group card shows Last / Next across all members by air date; rename, reorder or ungroup from the group's Edit panel
+- **Group episode browser** — browse a group **By season** (every member's seasons in premiere order) or **By year** (every member's episodes in air-date order); the choice is remembered per group
+- **Mark all aired episodes as watched** — checkbox when adding a show, and in a show's Edit panel; one TMDB request, so long runs like Jeopardy don't need 40-odd seasons clicked through
+- **Whole-season watched / unwatched** — right-click a season (long-press on iPad / iPhone) in the episode browser or the Last watched picker; plus a **Watched All** checkbox above each season's episode list. Only aired episodes are marked, and your position only ever moves forward
+- **Queue PINs** — a PIN-protected queue now asks for its PIN before showing its shows and movies; queue tabs show 🔒 / 🔓 and the PIN button in Manage Queues is red (PIN set) or green (none). A reload or daemon restart locks it again. Speed bump for parental controls, not real security
+- **`--clear-pin QUEUE`** — reset a forgotten queue PIN from the server: `sudo -u flickimp flickimp --clear-pin Kids`
+- **Build version prompt** — `scripts/build-linux.sh` shows the version and asks you to confirm it or enter a new one before building (`-y` skips)
+- **Debian package scripts** — the `.deb` now creates the service account and directories like the RPM does, and `apt purge` asks before deleting the configuration and database (default: keep)
+
+### Changed
+- **Episode browser layout** — the season list and the episode list scroll independently, so picking a season far down a long list shows its episodes right beside it
+- **Upgrades restart the service** — RPM and DEB upgrades restart FlickImp if it's running, so the new version takes effect straight away
+- **Backups and PINs** — PIN-protected queues are left out of a backup unless you enter their PIN; a Replace restore requires every PIN-protected queue to be unlocked first
+- **Queue PINs are stored hashed** — existing PINs are converted automatically; the API no longer sends PINs to the browser
+- **Database** — new tables `settings`, `show_groups`, `tmdb_episodes`, `tmdb_seasons` and columns `shows.group_id` / `group_order`, all added automatically on first start
+
+### Fixed
+- **Seasons with unannounced episodes failed to load** — TMDB sends `null` for a missing episode title or air date; these are now treated as blank instead of failing the whole season
+- **Changing TMDB credentials while requests are running** — credentials are now swapped safely, so saving them in Settings can't interfere with requests already in flight
+
+---
+
 ## [1.5.0] — 2026-09-30
 
 ### Added
@@ -106,4 +139,4 @@ Shipped as Linux packages only. The source was committed together at 1.4.3.
 - systemd service unit and install script
 - Qt6 configurator (`flickimp-config`) for service control and port/API-key settings
 
-<!-- SN: 00005 -->
+<!-- SN: 00006 -->

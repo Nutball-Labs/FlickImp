@@ -100,11 +100,14 @@ target_include_directories(flickimpcorelib PUBLIC lib third_party)
 add_library(flickimplib STATIC
     lib/database.cpp
     lib/scraper.cpp
+    lib/settings.cpp
+    lib/backup.cpp
+    lib/pin.cpp
 )
 target_include_directories(flickimplib PUBLIC lib)
 target_link_libraries(flickimplib
-    PUBLIC  sqlite3_bundled flickimpcorelib
-    PRIVATE CURL::libcurl nlohmann_json ${PLATFORM_LIBS}
+    PUBLIC  sqlite3_bundled flickimpcorelib nlohmann_json
+    PRIVATE CURL::libcurl ${PLATFORM_LIBS}
 )
 
 # --- flickimp (service daemon) --------------------------------------------
@@ -225,8 +228,17 @@ else()
     set(CPACK_DEBIAN_PACKAGE_MAINTAINER  "Nutball Labs <claudeai@iceberg.email>")
     set(CPACK_DEBIAN_PACKAGE_SECTION     "net")
     set(CPACK_DEBIAN_PACKAGE_PRIORITY    "optional")
-    set(CPACK_DEBIAN_PACKAGE_DEPENDS     "libcurl4 | libcurl3")
+    # debconf: asks before purge deletes config + database (packaging/debian/postrm)
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS     "libcurl4 | libcurl3, debconf (>= 0.5) | debconf-2.0")
     set(CPACK_DEBIAN_PACKAGE_HOMEPAGE    "https://github.com/Nutball-Labs/FlickImp")
+    # Maintainer scripts — same jobs as the RPM scriptlets above, mapped onto
+    # Debian's lifecycle (preinst ~ %pre, postinst ~ %post, prerm ~ %preun,
+    # postrm ~ %postun), plus the debconf templates for postrm's purge
+    # question. STRICT_PERMISSION gives scripts 0755 / templates 0644
+    # regardless of the checkout's file modes.
+    set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
+        "${CMAKE_SOURCE_DIR}/packaging/debian/preinst;${CMAKE_SOURCE_DIR}/packaging/debian/postinst;${CMAKE_SOURCE_DIR}/packaging/debian/prerm;${CMAKE_SOURCE_DIR}/packaging/debian/postrm;${CMAKE_SOURCE_DIR}/packaging/debian/templates")
+    set(CPACK_DEBIAN_PACKAGE_CONTROL_STRICT_PERMISSION ON)
 endif()
 include(CPack)
 
@@ -243,4 +255,4 @@ add_custom_target(archive
     COMMENT "Creating source archive"
 )
 
-# SN: 00005
+# SN: 00006

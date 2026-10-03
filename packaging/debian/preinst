@@ -1,0 +1,48 @@
+#!/bin/sh
+# Debian preinst — runs before package files are unpacked.
+# Same job as the RPM %pre scriptlet (cmake/rpm_pre_install.sh): service
+# account, directories, default config / config backup.
+# $1: install | upgrade | abort-upgrade
+set -e
+
+case "$1" in
+    install|upgrade) ;;
+    *) exit 0 ;;
+esac
+
+# nologin lives in /usr/sbin on Debian/Ubuntu; /sbin only on merged-/usr systems
+NOLOGIN=/usr/sbin/nologin
+[ -x "$NOLOGIN" ] || NOLOGIN=/sbin/nologin
+
+getent group  flickimp >/dev/null || groupadd -r flickimp
+getent passwd flickimp >/dev/null || useradd  -r -s "$NOLOGIN" \
+    -d /var/lib/flickimp -g flickimp \
+    -c "FlickImp service account" flickimp
+
+install -d -m 755 -o root     -g root     /etc/flickimp
+install -d -m 750 -o flickimp -g flickimp /var/lib/flickimp
+install -d -m 750 -o flickimp -g flickimp /var/lib/flickimp/db
+install -d -m 755 -o root     -g root     /var/lib/flickimp/web
+
+CONFIG=/etc/flickimp/fi_config.json
+if [ ! -f "$CONFIG" ]; then
+    cat > "$CONFIG" << 'EOF'
+{
+  "port": 8647,
+  "fi_db_path": "/var/lib/flickimp/db",
+  "fi_web_root": "",
+  "tmdb_api_key": "",
+  "tmdb_bearer_token": ""
+}
+EOF
+    chmod 644 "$CONFIG"
+    chown root:flickimp "$CONFIG"
+else
+    cp "$CONFIG" "${CONFIG}.bak"
+    chmod 644 "${CONFIG}.bak"
+    chown root:flickimp "${CONFIG}.bak"
+fi
+
+exit 0
+
+# SN: 00006

@@ -48,6 +48,8 @@ vcpkg_installed/
 
 # Backups
 *.bak
+
+# Docker compose bind-mount data (config with TMDB token, DB)
 data/
-*.tar.gz
 fi_config.json
+*.tar.gz

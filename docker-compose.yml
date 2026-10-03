@@ -1,5 +1,11 @@
+# Build and start:  docker compose up -d --build
+# Before first run, create the data dirs as the user who will own them, or
+# Docker creates them root-owned and the container user (UID 1000) can't write:
+#   mkdir -p data/config data/db
+# then put fi_config.json (with your TMDB token) in data/config/.
 services:
   flickimp:
+    build: .
     image: flickimp:latest
     container_name: flickimp
     restart: unless-stopped
@@ -8,4 +14,7 @@ services:
     volumes:
       - ./data/config:/home/appuser/.config/flickimp
       - ./data/db:/home/appuser/.local/share/flickimp/db
-      - ./web:/app/web
+      # Development only: serve web/ live from the checkout instead of the image
+      # - ./web:/app/web
+
+# SN: 00006

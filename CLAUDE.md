@@ -11,7 +11,7 @@ for working on the FlickImp project. Read this before touching any code.
 **FlickImp** is [BRIEF DESCRIPTION — one sentence].
 Private GitHub repo at https://github.com/Nutball-Labs/FlickImp — all work on `main` branch.
 
-**Current version:** 1.5.0 (SN 00005)
+**Current version:** 1.7.0 (SN 00006)
 **Config file:** `/etc/flickimp/fi_config.json` (system service) · `~/.config/flickimp/fi_config.json` (dev user)
 **Build system:** CMake
 
@@ -44,7 +44,9 @@ experience — don't over-explain Linux basics. Does need help with C++ idioms.
 | `lib/flickimp.hpp` | Umbrella header — include this in consumers of the lib |
 | `lib/models.hpp` | POD structs: `Show`, `Movie`; `ShowStatus`, `MovieStatus` enums |
 | `lib/database.cpp/.hpp` | SQLite wrapper — CRUD for shows and movies; `DbError` exception |
-| `lib/scraper.cpp/.hpp` | TMDB REST API only: show info, season list, episode list, `--check` new-episode detection; IMDB IDs used as lookup keys into TMDB, not scraped directly |
+| `lib/scraper.cpp/.hpp` | TMDB REST API only: show info, season list, episode list, `--check` new-episode detection; IMDB IDs used as lookup keys into TMDB, not scraped directly; credentials mutex-guarded (changeable at runtime); `test_credentials()` |
+| `lib/settings.cpp/.hpp` | `Settings::resolve()` — effective TMDB creds + port with source; precedence `--port` > DB `settings` table > `fi_config.json` > default |
+| `lib/backup.cpp/.hpp` | `Backup::export_all()` / `restore()` (Replace or Merge) — JSON backup format v1; gzip is done in the browser, not here |
 
 ### Service (`service/`) — compiled into `flickimp` binary (HTTP daemon)
 
@@ -105,7 +107,7 @@ Every source file carries a serial number comment at the bottom of the file:
 ```
 
 **Rules:**
-- There is one project-wide **high-water mark** SN, currently `00005`
+- There is one project-wide **high-water mark** SN, currently `00006`
 - When files are modified in a build/fix session, bump their SN to the
   current high-water mark
 - When cutting a new release, increment the high-water mark by 1 and apply
@@ -137,6 +139,10 @@ bump SNs, bump version, commit, and push.
 ## Architecture — Critical Decisions
 
 - **Config format: JSON** — all configuration files use JSON; chosen for human editability without technical knowledge, flexibility, and familiarity. No INI, TOML, YAML, or custom formats.
+- **Web Settings live in the DB** — the Linux service's `/etc/flickimp/fi_config.json` is read-only to the daemon, so values saved from the web Settings dialog go in the SQLite `settings` table and override the file. `fi_config.json` remains the bootstrap/fallback (and is what `flickimp-config` edits). Secrets are never returned to the browser in full (set flag + last 4 chars + source).
+- **Show groups** — several shows displayed as one (Doctor Who 1963/2005/2023, Jeopardy family). Membership is `shows.group_id` / `group_order` (written only by the group methods, never by `update_show`); `show_groups` holds just the name. A group's queue and list position are its members'; groups of < 2 dissolve via `prune_groups()`. The group card's Last/Next are computed server-side across members by air date. Group browser offers By season / By year; it reads episode lists from the `tmdb_episodes` / `tmdb_seasons` cache (final seasons never refetched, others at most daily) and fetches IMDB IDs only on click.
+- **Queue PINs** — parental-control speed bump. Stored as salted SHA-256 (`lib/pin.cpp`, self-contained, no crypto lib); plain-text PINs are hashed at startup and after restore. `POST /api/queues/:id/unlock` returns an in-memory token (lost on daemon restart); the browser sends tokens in `X-Queue-Tokens`. List endpoints (`/api/shows`, `/api/movies`, `/api/groups`) hide locked queues' items; changing a PIN or deleting a locked queue needs a token or `current_pin`. API never returns PINs (`has_pin` only). Forgotten PIN: `sudo -u flickimp flickimp --clear-pin QUEUE` (name or id; refuses to run as root to avoid root-owned SQLite WAL files). NOT covered: per-id routes, Check All log, backup download.
+- **Backup/restore** — `GET /api/backup?caches=0|1` and `POST /api/restore?mode=replace|merge` speak plain JSON; the browser gzips/gunzips with `CompressionStream`. Restore runs in one transaction and first snapshots the DB to `<db>.pre-restore` via `VACUUM INTO`. Table names come from fixed lists; columns are filtered against the live schema, so backups survive schema changes.
 
 ---
 
@@ -160,7 +166,7 @@ Run before first build: `sudo dnf install libcurl-devel && ./scripts/get-deps.sh
 - **Next episode air date on show card** — show the air date alongside the "Next:" line; two distinct cases: (1) caught-up shows — use `next_episode_to_air` from TMDB `/tv/{id}` response (already in `fetch_show_info` payload, zero extra API calls) to show when the upcoming episode airs; (2) behind shows — need the specific historic air date of `show.episode+1`, requires storing per-episode data or a targeted `fetch_season_episodes` call during `--check`; implement case 1 first (most useful for currently-airing shows); requires new `next_air_date TEXT` field on Show + DB migration
 - **IMDB clipboard import/export** — copy IMDB URL for a show, movie, or specific episode to/from clipboard; useful for quick lookup or pasting into browser
 - **named queues / watchlists** — configurable named queues (e.g. "Patsy", "Steve", "Together") that appear as tabs in both the web UI and the Qt GUI; each queue is an independent list of shows and movies; allows isolating solo watching from shared watching without mixing entries
-- **per-queue PIN protection** — DEFERRED / LOW PRIORITY; optional PIN on individual queues to keep adult content away from kids; intentionally not implementing full security — no desire to maintain an auth system; if pursued, keep it minimal (simple PIN, no sessions, no crypto beyond basic hashing)
+- **per-queue PIN protection** — minimal version built (see Architecture → Queue PINs); intentionally not full security — no accounts, no sessions beyond in-memory unlock tokens
 - **My Services** — user-configurable list of streaming services they actually subscribe to; used to filter out availability results for services they don't have; stored in config, editable from the UI; the service field on shows should draw from this list as a dropdown
 - **Mark watched and advance** — one-click from the card to increment episode (or roll to next season) without opening the popup; most common action deserves the shortest path
 - **Last-watched timestamp** — date field on show/movie records; surfaces stale entries and shows what's actively in progress
@@ -177,6 +183,7 @@ Run before first build: `sudo dnf install libcurl-devel && ./scripts/get-deps.sh
 
 ## Completed
 
+- **Release calendar, Docker, Settings, Backup/Restore, show groups, season marking, queue PINs (v1.7.0)** — calendar + Docker reworked from PRs #2/#1 (@tomcannan); DB-backed Settings; gzip JSON backup with Merge/Replace; show groups with By season / By year browser; mark-aired / whole-season watched (right-click, long-press, Watched All); hashed queue PINs with unlock tokens and `--clear-pin`; two-pane episode browser; RPM/DEB upgrade restarts; Debian maintainer scripts with debconf purge prompt
 - **Windows + macOS packages (v1.5.0)** — per-user installers (Task Scheduler / launchd autostart), `--log FILE`, `Platform::exe_dir()` for web-root discovery, per-platform CPack (win64 ZIP; macOS universal TGZ+ZIP), vcpkg manifest for Windows curl
 - **Named queues, Shows/Movies tabs, Current/Queued sub-tabs, drag-to-reorder, zoom, PWA manifest (v1.1.0–1.4.3)**
 
@@ -268,4 +275,4 @@ Use the `/postit` slash command to record an idea without acting on it. It write
 - **Phase 5 (Season/episode picker):** Complete — modal popup with colour-coded season list and per-episode watched checkboxes
 - All work on `main` branch
 
-<!-- SN: 00005 -->
+<!-- SN: 00006 -->

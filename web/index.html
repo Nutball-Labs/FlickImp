@@ -25,6 +25,8 @@
         <span class="zoom-label" id="zoom-label">100%</span>
         <button class="zoom-btn" onclick="zoomIn()" aria-label="Zoom in">+</button>
       </div>
+      <button class="menu-item" onclick="openSettingsModal()">Settings</button>
+      <button class="menu-item" onclick="openBackupModal()">Backup / Restore</button>
       <button class="menu-item" onclick="openAboutModal()">About</button>
     </div>
   </div>
@@ -76,16 +78,17 @@
     </div>
 
   </section>
-<!-- ===== Calendar ===== -->
+
+  <!-- ===== Calendar ===== -->
   <section id="calendar-section" class="hidden">
     <div class="section-header">
       <h2>Release Calendar</h2>
       <div class="calendar-controls">
-        <button class="btn-subtle" onclick="navigateCalendar(-1)">&larr; Prev</button>
+        <button class="btn-action" onclick="navigateCalendar(-1)">&larr; Prev</button>
         <span id="calendar-month-label" class="calendar-month-label"></span>
-        <button class="btn-subtle" onclick="navigateCalendar(1)">Next &rarr;</button>
-        <button class="btn-subtle" onclick="resetCalendarToday()">Today</button>
-        <button class="btn-subtle" onclick="loadCalendar(true)" title="Refresh Calendar">&#x21bb; Refresh</button>
+        <button class="btn-action" onclick="navigateCalendar(1)">Next &rarr;</button>
+        <button class="btn-action" onclick="resetCalendarToday()">Today</button>
+        <button class="btn-action" onclick="loadCalendar(true)" title="Refresh Calendar">&#x21bb; Refresh</button>
       </div>
     </div>
     <div id="calendar-grid" class="calendar-grid">
@@ -98,6 +101,7 @@
 <div id="episode-view" class="hidden">
   <div class="ev-header">
     <h2 id="ev-title"></h2>
+    <div class="ev-mode-toggle hidden" id="ev-mode-toggle"></div>
   </div>
   <div class="ev-body">
     <div class="ev-seasons-pane" id="ev-seasons-pane"></div>
@@ -172,13 +176,18 @@
         <div class="field">
           <label for="new-show-imdb">IMDB Link</label>
           <input type="text" id="new-show-imdb"
-                 placeholder="e.g. tt0903747" autocomplete="off">
+                 placeholder="e.g. tt0903747" autocomplete="off"
+                 oninput="updateCaughtUpRow()">
         </div>
         <div class="field span2">
           <label for="new-show-ep">Last Season / Episode Watched</label>
           <input type="text" id="new-show-ep"
                  placeholder="leave blank = not started" autocomplete="off">
         </div>
+        <label class="check-row span2 hidden" id="new-show-caughtup-row">
+          <input type="checkbox" id="new-show-caughtup" onchange="caughtUpToggled()">
+          Mark all aired episodes as watched
+        </label>
       </div>
       <div class="form-actions">
         <button class="btn-primary" onclick="addShow()">Add</button>
@@ -252,6 +261,9 @@
   </div>
 </div>
 
+<!-- ===== Season right-click menu ===== -->
+<div id="season-ctx-menu" class="ctx-menu hidden"></div>
+
 <!-- ===== Episode link popup ===== -->
 <div id="ep-link-popup" class="ep-link-popup hidden">
   <a id="ep-link-tmdb" href="#" target="_blank" rel="noopener" class="ep-link-btn tmdb-btn">TMDB</a>
@@ -271,7 +283,52 @@
   </div>
 </div>
 
+<!-- ===== Settings modal ===== -->
+<div class="modal-overlay hidden" id="settings-modal" onclick="settingsModalClick(event)">
+  <div class="modal-dialog add-modal-dialog">
+    <div class="modal-header">
+      <div class="modal-title">Settings</div>
+      <button class="modal-close" onclick="closeSettingsModal()">&#x2715;</button>
+    </div>
+    <div class="modal-form-body" id="settings-body">
+      <div class="empty">Loading...</div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Backup / Restore modal ===== -->
+<div class="modal-overlay hidden" id="backup-modal" onclick="backupModalClick(event)">
+  <div class="modal-dialog add-modal-dialog">
+    <div class="modal-header">
+      <div class="modal-title">Backup / Restore</div>
+      <button class="modal-close" onclick="closeBackupModal()">&#x2715;</button>
+    </div>
+    <div class="modal-form-body" id="backup-body">
+      <div class="empty">Loading...</div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Queue PIN entry (last, so it sits above other dialogs) ===== -->
+<div class="modal-overlay hidden" id="pin-modal">
+  <div class="modal-dialog pin-modal-dialog">
+    <div class="modal-header">
+      <div class="modal-title" id="pin-modal-title">PIN</div>
+    </div>
+    <div class="modal-form-body">
+      <div class="settings-note" id="pin-modal-msg"></div>
+      <input type="password" id="pin-modal-input" class="pin-input"
+             inputmode="numeric" autocomplete="off" aria-label="PIN">
+      <div class="settings-note settings-warn" id="pin-modal-error"></div>
+      <div class="form-actions">
+        <button class="btn-cancel"  id="pin-cancel">Cancel</button>
+        <button class="btn-primary" id="pin-ok">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="app.js"></script>
 </body>
 </html>
-<!-- SN: 00004 -->
+<!-- SN: 00006 -->

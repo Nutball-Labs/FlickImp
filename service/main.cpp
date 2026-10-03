@@ -6,7 +6,10 @@
 #include "../lib/models.hpp"
 #include "../lib/platform.hpp"
 #include "../lib/scraper.hpp"
+#include "../lib/settings.hpp"
 #include "../lib/version.hpp"
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -15,6 +18,10 @@
 #include <thread>
 #include <chrono>
 #include <cstdio>
+#include <vector>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -114,27 +121,81 @@ static int run_check(const std::string& db_path) {
     return 0;
 }
 
+// --clear-pin QUEUE: admin reset for a forgotten queue PIN. QUEUE is a queue
+// id or name (case-insensitive). Needs write access to the DB file, i.e. the
+// service account — which is the point: only someone with access to the
+// server itself can do it, not someone with just the web page.
+static int run_clear_pin(const std::string& db_path, const std::string& target) {
+#ifndef _WIN32
+    if (::geteuid() == 0) {
+        // As root, SQLite can leave root-owned -wal/-shm files that the
+        // daemon (running as flickimp) then can't open.
+        std::cerr << "Don't run --clear-pin as root; run it as the service account:\n"
+                  << "  sudo -u flickimp flickimp --clear-pin \"" << target << "\"\n";
+        return 1;
+    }
+#endif
+    FlickImp::Database db(db_path);
+    auto queues = db.all_queues();
+
+    auto lower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return s;
+    };
+    std::vector<FlickImp::Queue> matches;
+    bool numeric = !target.empty() &&
+                   std::all_of(target.begin(), target.end(), [](unsigned char c) { return std::isdigit(c); });
+    for (const auto& q : queues) {
+        if (numeric ? q.id == std::stoi(target) : lower(q.name) == lower(target))
+            matches.push_back(q);
+    }
+
+    if (matches.size() != 1) {
+        std::cerr << (matches.empty() ? "No queue matches \"" : "More than one queue is named \"")
+                  << target << "\". Use a name or id from this list:\n";
+        for (const auto& q : queues)
+            std::cerr << "  " << std::setw(3) << q.id << "  " << q.name
+                      << (q.pin.empty() ? "" : "  (PIN set)") << "\n";
+        return 1;
+    }
+
+    FlickImp::Queue q = matches.front();
+    if (q.pin.empty()) {
+        std::cout << "Queue \"" << q.name << "\" has no PIN; nothing to do.\n";
+        return 0;
+    }
+    q.pin.clear();
+    db.update_queue(q);
+    std::cout << "PIN cleared for queue \"" << q.name << "\" (id " << q.id << ").\n";
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
     // Config file provides defaults; command-line args override
     auto cfg = FlickImp::load_config();
-    int port = cfg.port;
+    int cli_port = 0;
     std::string web_root = cfg.fi_web_root;
     bool check_mode = false;
     std::string log_file;
-
-    // Initialise TMDB scraper (must happen before any Scraper:: calls)
-    FlickImp::Scraper::init(cfg.tmdb_api_key, cfg.tmdb_bearer_token);
+    std::string clear_pin;      // --clear-pin QUEUE
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if ((arg == "--port" || arg == "-p") && i + 1 < argc) {
-            port = std::stoi(argv[++i]);
+            cli_port = std::stoi(argv[++i]);
         } else if ((arg == "--web" || arg == "-w") && i + 1 < argc) {
             web_root = argv[++i];
         } else if ((arg == "--log" || arg == "-l") && i + 1 < argc) {
             log_file = argv[++i];
         } else if (arg == "--check" || arg == "-c") {
             check_mode = true;
+        } else if (arg == "--clear-pin") {
+            if (i + 1 >= argc) {
+                std::cerr << "--clear-pin needs a queue name or id\n";
+                return 1;
+            }
+            clear_pin = argv[++i];
         } else if (arg == "--version" || arg == "-v") {
             std::cout << APP_NAME " " APP_VERSION "\n";
             return 0;
@@ -145,6 +206,9 @@ int main(int argc, char* argv[]) {
                 "  --web DIR    Web assets directory\n"
                 "  --log FILE   Append stdout/stderr to FILE (for launchd / Task Scheduler)\n"
                 "  --check      Check IMDB for new episodes on all tracked shows, then exit\n"
+                "  --clear-pin QUEUE\n"
+                "               Remove a queue's PIN (queue name or id), then exit.\n"
+                "               Run as the service account: sudo -u flickimp flickimp --clear-pin Kids\n"
                 "  --version    Print version and exit\n";
             return 0;
         }
@@ -164,6 +228,29 @@ int main(int argc, char* argv[]) {
     std::string db_path = cfg.fi_db_path.empty()
         ? FlickImp::Platform::db_path()
         : cfg.fi_db_path + "/flickimp.db";
+
+    if (!clear_pin.empty()) {
+        try {
+            return run_clear_pin(db_path, clear_pin);
+        } catch (const std::exception& e) {
+            std::cerr << "Error: " << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    // Settings saved from the web UI live in the DB and override the config
+    // file (--port still beats both). Initialise the TMDB scraper from the
+    // result — must happen before any Scraper:: calls.
+    int port = 8647;
+    try {
+        FlickImp::Database db(db_path);
+        auto eff = FlickImp::Settings::resolve(cfg, db, cli_port);
+        FlickImp::Scraper::init(eff.tmdb_api_key, eff.tmdb_bearer_token);
+        port = eff.port;
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
 
     if (check_mode) {
         try {
@@ -187,7 +274,13 @@ int main(int argc, char* argv[]) {
     }
 
     try {
-        FlickImp::Server srv(db_path, web_root, port);
+        FlickImp::ServerOptions opts;
+        opts.db_path  = db_path;
+        opts.web_root = web_root;
+        opts.port     = port;
+        opts.cli_port = cli_port;
+        opts.file_cfg = cfg;
+        FlickImp::Server srv(opts);
         std::cout << "FlickImp " APP_VERSION
                   << " — http://localhost:" << port << "\n"
                   << "  DB:  " << db_path << "\n"
@@ -202,4 +295,4 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
-// SN: 00005
+// SN: 00006

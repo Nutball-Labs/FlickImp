@@ -1,6 +1,9 @@
 .git
-build-linux
+.claude
+build-*
 packages
+data
 *.rpm
 *.deb
 *.tar.gz
+# SN: 00006

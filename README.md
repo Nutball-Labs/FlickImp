@@ -58,6 +58,23 @@ prompt on Windows. On macOS, `install.sh` clears the download quarantine flag.
 See `README-Windows.txt` / `README-macOS.txt` inside each package for file locations,
 upgrading and uninstalling.
 
+### Docker
+
+A `Dockerfile` and `docker-compose.yml` are included for running FlickImp in a container
+on any Docker host. Config and the database live in `./data/` on the host:
+
+```bash
+mkdir -p data/config data/db          # create these yourself, or Docker makes them root-owned
+cat > data/config/fi_config.json <<'JSON'
+{ "tmdb_bearer_token": "your-TMDB-read-access-token" }
+JSON
+docker compose up -d --build
+```
+
+Then browse to `http://localhost:8647`. The container runs as UID 1000; if your host
+user has a different UID, `chown -R 1000:1000 data` so the container can write the DB.
+Upgrade with `git pull && docker compose up -d --build`.
+
 ---
 
 ## Building from Source
@@ -171,5 +188,5 @@ feature decisions, and real-world testing are entirely human-driven.
 GNU General Public License v3 — see [LICENSE](LICENSE).
 Copyright (C) 2026 Nutball Labs / Stephen Berg
 
-<!-- SN: 00005 -->
+<!-- SN: 00006 -->
 

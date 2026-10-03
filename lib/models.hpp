@@ -35,8 +35,18 @@ struct Show {
     ShowQueue   queue{ShowQueue::Current};
     int        sort_order{0};
     int        queue_id{1};
+    int        group_id{0};       // show_groups.id; 0 = not grouped
+    int        group_order{0};    // position within the group (1-based)
     std::string notes;
     std::string thumbnail_url;
+};
+
+// Several shows displayed as one (e.g. Doctor Who 1963 / 2005 / 2023).
+// Membership lives on the shows (group_id / group_order); a group's queue and
+// list position are those of its members.
+struct ShowGroup {
+    int         id{0};
+    std::string name;
 };
 
 struct Movie {
@@ -63,4 +73,4 @@ struct CastMember {
 
 } // namespace FlickImp
 
-// SN: 00004
+// SN: 00006

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Debian prerm — runs before package files are removed.
+# Same job as the RPM %preun scriptlet (cmake/rpm_preun.sh): stop and disable
+# the service on removal only; an upgrade is handled by postinst's restart.
+# $1: remove | upgrade | deconfigure | failed-upgrade
+set -e
+
+if [ "$1" = "remove" ]; then
+    systemctl stop    flickimp 2>/dev/null || true
+    systemctl disable flickimp 2>/dev/null || true
+fi
+
+exit 0
+
+# SN: 00006

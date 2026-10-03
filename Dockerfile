@@ -45,3 +45,5 @@ USER appuser
 EXPOSE 8647
 
 CMD ["/app/flickimp", "--web", "/app/web", "--port", "8647"]
+
+# SN: 00006

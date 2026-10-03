@@ -1,9 +1,16 @@
 'use strict';
 
+// Queue PIN unlock state (see "Queue PINs" below). Declared first because
+// api() reads it, and the first api() call runs during script start-up.
+let g_queue_tokens  = {};     // queue id -> unlock token
+let g_lock_recovery = null;   // shared in-flight recovery (shows + movies both hit it)
+
 // ---------- API helpers ---------------------------------------------------
 
 async function api(method, path, body) {
     const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    const tokens = Object.values(g_queue_tokens).filter(Boolean);
+    if (tokens.length) opts.headers['X-Queue-Tokens'] = tokens.join(',');
     if (body !== undefined) opts.body = JSON.stringify(body);
     const res = await fetch(path, opts);
     return res.json();
@@ -35,6 +42,7 @@ function pad3(n) { return String(n).padStart(3, '0'); }
 
 let g_new_show_tmdb_id  = 0;
 let g_new_show_thumb    = '';
+let g_new_show_first_air = '';   // first_air_date of the chosen TMDB result
 let g_new_movie_tmdb_id = 0;
 let g_new_movie_thumb   = '';
 
@@ -47,9 +55,10 @@ function searchResultHtml(r, selectFn) {
     const year = r.year ? `<div class="search-result-year">${esc(r.year)}</div>` : '';
     const titleArg = JSON.stringify(r.title).replace(/"/g, '&quot;');
     const thumbArg = JSON.stringify(r.poster_url || '').replace(/"/g, '&quot;');
+    const airArg   = JSON.stringify(r.first_air_date || '').replace(/"/g, '&quot;');
     return `
     <div class="search-result-item"
-         onclick="${selectFn}(${r.tmdb_id}, ${titleArg}, ${thumbArg})">
+         onclick="${selectFn}(${r.tmdb_id}, ${titleArg}, ${thumbArg}, ${airArg})">
       ${img}
       <div class="search-result-info">
         <div class="search-result-title">${esc(r.title)}</div>
@@ -98,11 +107,44 @@ async function searchMovies() {
     }
 }
 
-function selectShowResult(tmdbId, title, posterUrl) {
-    g_new_show_tmdb_id = tmdbId;
-    g_new_show_thumb   = posterUrl;
+function selectShowResult(tmdbId, title, posterUrl, firstAirDate) {
+    g_new_show_tmdb_id   = tmdbId;
+    g_new_show_thumb     = posterUrl;
+    g_new_show_first_air = firstAirDate || '';
     document.getElementById('new-show-title').value = title;
     document.getElementById('show-search-results').classList.add('hidden');
+    updateCaughtUpRow();
+}
+
+// "Mark all aired episodes watched" is offered once the show has started
+// airing. With a TMDB match we know the first air date; with only a typed
+// IMDB ID we don't, so offer it and let the server check.
+function updateCaughtUpRow() {
+    const row = document.getElementById('new-show-caughtup-row');
+    const imdb = document.getElementById('new-show-imdb').value.trim();
+    const aired = g_new_show_tmdb_id
+        ? (g_new_show_first_air !== '' && g_new_show_first_air <= localDateStr(new Date()))
+        : imdb !== '';
+    row.classList.toggle('hidden', !aired);
+    if (!aired) {
+        document.getElementById('new-show-caughtup').checked = false;
+        caughtUpToggled();
+    }
+}
+
+function caughtUpToggled() {
+    const on = document.getElementById('new-show-caughtup').checked;
+    const ep = document.getElementById('new-show-ep');
+    ep.disabled = on;
+    ep.placeholder = on ? 'set from TMDB' : 'leave blank = not started';
+}
+
+// One TMDB call server-side; writes watched rows for every aired episode.
+// Returns true on success, otherwise alerts the reason.
+async function markAiredWatched(showId) {
+    const r = await api('POST', `/api/shows/${showId}/mark-aired-watched`);
+    if (r.error) { alert('Could not mark episodes watched: ' + r.error); return false; }
+    return true;
 }
 
 function selectMovieResult(tmdbId, title, posterUrl) {
@@ -185,26 +227,7 @@ function showDrop(event, targetId) {
     document.querySelectorAll('.drag-over-before, .drag-over-after')
         .forEach(el => { el.classList.remove('drag-over-before', 'drag-over-after'); });
     if (!g_drag_id || g_drag_id === targetId || g_drag_type !== 'show') return;
-
-    const isQueued = g_shows_tab === 'queued';
-    const filtered = g_shows.filter(s => (s.queue === 'queued') === isQueued);
-    sortShowArray(filtered);
-    const ids = filtered.map(s => s.id);
-    const dragIdx = ids.indexOf(g_drag_id);
-    if (dragIdx < 0) return;
-
-    ids.splice(dragIdx, 1);
-    let dropIdx = ids.indexOf(targetId);
-    if (dropIdx < 0) return;
-    if (insertAfter) dropIdx += 1;
-    ids.splice(dropIdx, 0, g_drag_id);
-
-    ids.forEach((id, i) => {
-        const show = g_shows.find(s => s.id === id);
-        if (show) show.sort_order = i + 1;
-    });
-    renderShows(g_shows);
-    api('PUT', '/api/shows/reorder', { order: ids });
+    reorderShowEntries(g_drag_id, targetId, insertAfter);
 }
 
 function movieDrop(event, targetId) {
@@ -269,20 +292,7 @@ function listDrop(event, type) {
         .forEach(el => { el.classList.remove('drag-over-before', 'drag-over-after'); });
     const atStart = edge && edge.pos === 'start';
     if (type === 'show') {
-        const isQueued = g_shows_tab === 'queued';
-        const filtered = g_shows.filter(s => (s.queue === 'queued') === isQueued);
-        sortShowArray(filtered);
-        const ids = filtered.map(s => s.id);
-        const dragIdx = ids.indexOf(g_drag_id);
-        if (dragIdx < 0) return;
-        ids.splice(dragIdx, 1);
-        if (atStart) ids.unshift(g_drag_id); else ids.push(g_drag_id);
-        ids.forEach((id, i) => {
-            const show = g_shows.find(s => s.id === id);
-            if (show) show.sort_order = i + 1;
-        });
-        renderShows(g_shows);
-        api('PUT', '/api/shows/reorder', { order: ids });
+        reorderShowEntries(g_drag_id, atStart ? 'start' : 'end');
     } else {
         sortMovieArray(g_movies);
         const ids = g_movies.map(m => m.id);
@@ -303,15 +313,20 @@ function listDrop(event, type) {
 
 // ---------- Main / sub tabs -----------------------------------------------
 
-let g_main_tab  = 'shows';   // 'shows' | 'movies'
+let g_main_tab  = 'shows';   // 'shows' | 'movies' | 'calendar'
 let g_shows_tab = 'current'; // 'current' | 'queued'
 let g_shows     = [];        // last loaded shows, for sub-tab re-render
 let g_movies    = [];        // last loaded movies, for drag reorder
 let g_queues    = [];
-let g_queue_id  = parseInt(localStorage.getItem('fi_queue_id')) || 1;
+// Start-up queue: a fixed choice from Settings, else the last one used
+let g_queue_id  = parseInt(localStorage.getItem('fi_startup_queue'))
+               || parseInt(localStorage.getItem('fi_queue_id')) || 1;
+let g_cal_date  = new Date(); // month shown in the release calendar
+let g_cal_cache = null;       // calendar events; null = stale, refetch on next view
 
 function switchMainTab(tab) {
     g_main_tab = tab;
+    localStorage.setItem('fi_last_tab', tab);
     document.getElementById('tab-shows').classList.toggle('active', tab === 'shows');
     document.getElementById('tab-movies').classList.toggle('active', tab === 'movies');
     const calTab = document.getElementById('tab-calendar');
@@ -323,7 +338,7 @@ function switchMainTab(tab) {
     if (calSec) calSec.classList.toggle('hidden', tab !== 'calendar');
 
     if (tab === 'calendar') {
-        loadCalendar(true);
+        loadCalendar();
     }
 }
 
@@ -335,7 +350,17 @@ function switchShowsTab(tab) {
 }
 
 async function loadShows() {
-    const shows = await api('GET', `/api/shows?queue_id=${g_queue_id}`);
+    g_cal_cache = null;
+    const [shows, groups] = await Promise.all([
+        api('GET', `/api/shows?queue_id=${g_queue_id}`),
+        api('GET', '/api/groups'),
+    ]);
+    if (shows && shows.locked) {
+        if (await handleLockedQueue()) return loadShows();
+        document.getElementById('shows-list').innerHTML = lockedListHtml();
+        return;
+    }
+    g_show_groups = Array.isArray(groups) ? groups : [];
     g_shows = shows;
     renderShows(shows);
 }
@@ -435,6 +460,13 @@ function showCard(s) {
             <label>Notes</label>
             <input type="text" id="enotes-${s.id}" value="${esc(s.notes)}" autocomplete="off">
           </div>
+          ${groupWithHtml(s)}
+          ${(s.tmdb_id || s.imdb_id) ? `
+          <label class="check-row span2">
+            <input type="checkbox" id="ecaughtup-${s.id}"
+                   onchange="document.getElementById('eep-${s.id}').disabled = this.checked">
+            Mark all aired episodes as watched
+          </label>` : ''}
         </div>
         <div class="form-actions">
           <button class="btn-primary" onclick="saveEdit(${s.id})">Save</button>
@@ -462,32 +494,16 @@ function showHasNew(s) {
         (s.latest_season === s.season && s.latest_episode > s.episode);
 }
 
-function sortShowArray(arr) {
-    const rank = s => {
-        if (s.status === 'finished') return 2;
-        if (showHasNew(s))           return 0;
-        return 1;
-    };
-    arr.sort((a, b) => {
-        const so_a = a.sort_order || 999999;
-        const so_b = b.sort_order || 999999;
-        if (so_a !== so_b) return so_a - so_b;
-        const d = rank(a) - rank(b);
-        return d !== 0 ? d : a.title.localeCompare(b.title);
-    });
-}
-
 function renderShows(shows) {
     const list = document.getElementById('shows-list');
-    const filtered = shows.filter(s => (s.queue === 'queued') === (g_shows_tab === 'queued'));
-    if (!filtered.length) {
+    const entries = showEntries(shows);
+    if (!entries.length) {
         list.innerHTML = g_shows_tab === 'queued'
             ? '<div class="empty">No queued shows.</div>'
             : '<div class="empty">No shows yet — add one above.</div>';
         return;
     }
-    sortShowArray(filtered);
-    list.innerHTML = filtered.map(showCard).join('');
+    list.innerHTML = entries.map(e => e.show ? showCard(e.show) : groupCard(e)).join('');
 }
 
 // ---------- Shows — card actions -----------------------------------------
@@ -533,9 +549,13 @@ async function saveEdit(id) {
         imdb_id:  document.getElementById(`eimdb-${id}`).value.trim(),
         notes:    document.getElementById(`enotes-${id}`).value.trim(),
     };
-    if (pos) { body.season = pos.season; body.episode = pos.episode; }
+    const caughtUpEl = document.getElementById(`ecaughtup-${id}`);
+    const caughtUp   = caughtUpEl && caughtUpEl.checked;
+    if (pos && !caughtUp) { body.season = pos.season; body.episode = pos.episode; }
 
     await api('PUT', `/api/shows/${id}`, body);
+    if (caughtUp) await markAiredWatched(id);
+    await applyGroupChoice(id);
     loadShows();
 }
 
@@ -559,19 +579,22 @@ function clearShowForm() {
     ['new-show-title', 'new-show-service', 'new-show-imdb', 'new-show-ep']
         .forEach(id => { document.getElementById(id).value = ''; });
     document.getElementById('show-search-results').classList.add('hidden');
-    g_new_show_tmdb_id = 0;
-    g_new_show_thumb   = '';
+    g_new_show_tmdb_id   = 0;
+    g_new_show_thumb     = '';
+    g_new_show_first_air = '';
+    updateCaughtUpRow();
 }
 
 async function addShow() {
     const title = document.getElementById('new-show-title').value.trim();
     if (!title) { alert('Title is required.'); return; }
 
-    const raw = document.getElementById('new-show-ep').value.trim() || 's000-e000';
+    const caughtUp = document.getElementById('new-show-caughtup').checked;
+    const raw = (!caughtUp && document.getElementById('new-show-ep').value.trim()) || 's000-e000';
     const pos  = parseEp(raw);
     if (!pos) { alert('Use the format s001-e001'); return; }
 
-    await api('POST', '/api/shows', {
+    const added = await api('POST', '/api/shows', {
         title,
         service:       document.getElementById('new-show-service').value.trim(),
         season:        pos.season,
@@ -581,7 +604,9 @@ async function addShow() {
         thumbnail_url: g_new_show_thumb,
         queue_id:      g_queue_id,
     });
+    if (added.error) { alert('Could not add show: ' + added.error); return; }
     hideAddShowForm();
+    if (caughtUp) await markAiredWatched(added.id);
     loadShows();
 }
 
@@ -646,7 +671,8 @@ function renderSeasons(showId, seasons, activeSeason,
     pane.innerHTML = seasons.map(s => `
       <button class="season-btn ${seasonClass(s.watched_count, s.total_episodes)}${s.season === activeSeason ? ' season-active' : ''}"
               id="sbtn-${showId}-${s.season}"
-              onclick="${clickFn}(${showId}, ${s.season})">
+              onclick="${clickFn}(${showId}, ${s.season})"
+              oncontextmenu="seasonContextMenu(event,${showId},${s.season},${s.watched_count},${s.total_episodes})">
         S${String(s.season).padStart(2,'0')}
         <span class="season-ep-count">${s.watched_count}/${s.total_episodes}</span>
       </button>`).join('');
@@ -735,6 +761,7 @@ async function popupMarkWatched(showId, season, episode, watched, seasonTotal = 
     const data = await api('PUT',
         `/api/shows/${showId}/episodes/${season}/${episode}/watched`,
         {watched, season_total: seasonTotal});
+    g_cal_cache = null;
 
     const row = document.getElementById(`pep-${showId}-${season}-${episode}`);
     if (row) row.classList.toggle('ep-watched', watched);
@@ -780,7 +807,13 @@ async function popupMarkWatched(showId, season, episode, watched, seasonTotal = 
 // ---------- Movies --------------------------------------------------------
 
 async function loadMovies() {
+    g_cal_cache = null;
     const movies = await api('GET', `/api/movies?queue_id=${g_queue_id}`);
+    if (movies && movies.locked) {
+        if (await handleLockedQueue()) return loadMovies();
+        document.getElementById('movies-list').innerHTML = lockedListHtml();
+        return;
+    }
     g_movies = movies;
     renderMovies(movies);
 }
@@ -924,7 +957,7 @@ let g_ev_show_id = 0;
 let g_ev_season  = 0;
 
 function titleClick() {
-    if (g_ev_show_id) closeEpisodeView();
+    if (g_ev_show_id || g_gv_group) closeEpisodeView();
 }
 
 async function openEpisodeView(showId, title) {
@@ -935,6 +968,8 @@ async function openEpisodeView(showId, title) {
     document.getElementById('main-view').classList.add('hidden');
     document.getElementById('episode-view').classList.remove('hidden');
     document.getElementById('site-title').classList.add('title-nav');
+    document.body.classList.add('ev-open');
+    window.scrollTo(0, 0);
 
     const seasons = await api('GET', `/api/shows/${showId}/seasons`);
     if (!seasons.error)
@@ -945,8 +980,12 @@ function closeEpisodeView() {
     document.getElementById('episode-view').classList.add('hidden');
     document.getElementById('main-view').classList.remove('hidden');
     document.getElementById('site-title').classList.remove('title-nav');
+    document.body.classList.remove('ev-open');
     g_ev_show_id = 0;
     g_ev_season  = 0;
+    g_gv_group   = null;
+    g_gv_sel     = null;
+    document.getElementById('ev-mode-toggle').classList.add('hidden');
     loadShows();  // refresh card in case watched state changed
 }
 
@@ -958,6 +997,7 @@ async function selectEpisodeViewSeason(showId, season) {
 
     const pane = document.getElementById('ev-episodes-pane');
     pane.innerHTML = '<div class="empty">Loading episodes…</div>';
+    pane.scrollTop = 0;
     const episodes = await api('GET', `/api/shows/${showId}/episodes?season=${season}`);
     if (!Array.isArray(episodes) || episodes.error) {
         pane.innerHTML = `<div class="empty">${esc(episodes?.error || 'Failed to load')}</div>`;
@@ -970,7 +1010,7 @@ function renderEpisodeCards(showId, season, episodes) {
     const pane = document.getElementById('ev-episodes-pane');
     if (!episodes.length) { pane.innerHTML = '<div class="empty">No episodes found.</div>'; return; }
     const seasonTotal = episodes.length;
-    pane.innerHTML = episodes.map(ep => {
+    pane.innerHTML = evAllRowHtml(showId, season) + episodes.map(ep => {
         const epTitleJson = JSON.stringify(ep.title || '').replace(/"/g, '&quot;');
         return `
         <div class="ep-card${ep.watched ? ' ep-card-watched' : ''}"
@@ -988,7 +1028,7 @@ function renderEpisodeCards(showId, season, episodes) {
           </div>
           <div class="ep-card-actions">
             <label class="ep-watched-toggle">
-              <input type="checkbox" ${ep.watched ? 'checked' : ''}
+              <input type="checkbox" ${ep.watched ? 'checked' : ''} data-aired="${isAired(ep) ? 1 : 0}"
                      onchange="evToggleWatched(${showId},${season},${ep.episode},this.checked,${seasonTotal})">
               <span>Watched</span>
             </label>
@@ -996,13 +1036,16 @@ function renderEpisodeCards(showId, season, episodes) {
           </div>
         </div>`;
     }).join('');
+    syncEvAllBox();
 }
 
 async function evToggleWatched(showId, season, episode, watched, seasonTotal) {
     await api('PUT', `/api/shows/${showId}/episodes/${season}/${episode}/watched`,
               {watched, season_total: seasonTotal});
+    g_cal_cache = null;
     const card = document.getElementById(`epcard-${showId}-${season}-${episode}`);
     if (card) card.classList.toggle('ep-card-watched', watched);
+    syncEvAllBox();
     // Refresh season progress counts in the left pane
     const seasons = await api('GET', `/api/shows/${showId}/seasons`);
     if (!seasons.error)
@@ -1198,23 +1241,119 @@ function closeEpLinkPopup() {
 document.addEventListener('click', e => {
     if (!document.getElementById('ep-link-popup').classList.contains('hidden'))
         closeEpLinkPopup();
+    const menu = document.getElementById('season-ctx-menu');
+    if (!menu.classList.contains('hidden') && !menu.contains(e.target))
+        closeSeasonMenu();
 });
+window.addEventListener('scroll', closeSeasonMenu, true);
 
 document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') closeEpLinkPopup();
+    if (e.key === 'Escape') { closeEpLinkPopup(); closeSeasonMenu(); }
     if (e.key === 'Escape' && g_popup_show_id) closeWatchedPopup();
     if (e.key === 'Escape' && !document.getElementById('check-modal').classList.contains('hidden'))
         closeCheckModal();
     if (e.key === 'Escape' && !document.getElementById('cast-modal').classList.contains('hidden'))
         closeCastModal();
-    if (e.key === 'Escape' && g_ev_show_id) closeEpisodeView();
+    if (e.key === 'Escape' && (g_ev_show_id || g_gv_group)) closeEpisodeView();
     if (e.key === 'Escape' && !document.getElementById('about-modal').classList.contains('hidden'))
         closeAboutModal();
     if (e.key === 'Escape' && !document.getElementById('manage-queues-modal').classList.contains('hidden'))
         closeManageQueuesModal();
+    if (e.key === 'Escape' && !document.getElementById('settings-modal').classList.contains('hidden'))
+        closeSettingsModal();
+    if (e.key === 'Escape' && !document.getElementById('backup-modal').classList.contains('hidden'))
+        closeBackupModal();
 });
 
-loadQueues().then(() => { loadShows(); loadMovies(); });
+loadQueues().then(() => {
+    loadShows();
+    loadMovies();
+    // Start-up tab: a fixed choice from Settings, else the last one used
+    const pref = localStorage.getItem('fi_startup_tab') || 'last';
+    const tab  = pref === 'last' ? localStorage.getItem('fi_last_tab') : pref;
+    if (['movies', 'calendar'].includes(tab)) switchMainTab(tab);
+});
+
+// ---------- Queue PINs ------------------------------------------------------
+// Speed bump, not security: the server hides a PIN-protected queue's items
+// unless the request carries an unlock token for it (X-Queue-Tokens header,
+// added by api()). Tokens live only in this page, so a reload re-locks, and
+// a daemon restart forgets them (handled in handleLockedQueue).
+
+
+// Masked PIN entry. Resolves to the entered string, or null on Cancel/Escape.
+function askPin({ title, message = '', error = '', allowEmpty = false }) {
+    return new Promise(resolve => {
+        const modal  = document.getElementById('pin-modal');
+        const input  = document.getElementById('pin-modal-input');
+        const errEl  = document.getElementById('pin-modal-error');
+        document.getElementById('pin-modal-title').textContent = title;
+        document.getElementById('pin-modal-msg').textContent   = message;
+        errEl.textContent = error;
+        input.value = '';
+        modal.classList.remove('hidden');
+        setTimeout(() => input.focus(), 0);
+
+        const done = value => {
+            modal.classList.add('hidden');
+            input.onkeydown = null;
+            resolve(value);
+        };
+        const submit = () => {
+            const v = input.value.trim();
+            if (!v && !allowEmpty) { errEl.textContent = 'Enter a PIN.'; return; }
+            done(v);
+        };
+        document.getElementById('pin-ok').onclick     = submit;
+        document.getElementById('pin-cancel').onclick = () => done(null);
+        input.onkeydown = e => {
+            if (e.key === 'Enter')  { e.preventDefault(); submit(); }
+            if (e.key === 'Escape') { e.stopPropagation(); done(null); }
+        };
+    });
+}
+
+// True if the queue can be viewed now (no PIN, already unlocked, or the
+// user just entered the right PIN); false if they cancelled.
+async function ensureUnlocked(queueId) {
+    const q = g_queues.find(x => x.id === queueId);
+    if (!q || !q.has_pin || g_queue_tokens[queueId]) return true;
+    let error = '';
+    for (;;) {
+        const pin = await askPin({ title: `🔒 ${q.name}`, message: 'Enter the PIN for this queue.', error });
+        if (pin === null) return false;
+        const r = await api('POST', `/api/queues/${queueId}/unlock`, { pin });
+        if (r.token) {
+            g_queue_tokens[queueId] = r.token;
+            renderQueueTabs();
+            return true;
+        }
+        error = r.error || 'Wrong PIN';
+    }
+}
+
+// The server said the current queue is locked (fresh page, or the daemon
+// restarted and forgot our token). Ask for the PIN; on Cancel move to the
+// first queue without one. Returns true if a reload will now succeed.
+function handleLockedQueue() {
+    if (!g_lock_recovery) {
+        g_lock_recovery = (async () => {
+            delete g_queue_tokens[g_queue_id];
+            if (await ensureUnlocked(g_queue_id)) return true;
+            const open = g_queues.find(q => !q.has_pin);
+            if (!open) return false;
+            g_queue_id = open.id;
+            localStorage.setItem('fi_queue_id', g_queue_id);
+            renderQueueTabs();
+            return true;
+        })().finally(() => { g_lock_recovery = null; });
+    }
+    return g_lock_recovery;
+}
+
+function lockedListHtml() {
+    return '<div class="empty">🔒 This queue is locked.</div>';
+}
 
 // ---------- Queues -------------------------------------------------------
 
@@ -1235,9 +1374,10 @@ function renderQueueTabs() {
         container.innerHTML = '';
         return;
     }
+    const lock = q => !q.has_pin ? '' : (g_queue_tokens[q.id] ? ' 🔓' : ' 🔒');
     container.innerHTML = g_queues.map(q =>
         `<button class="queue-tab-btn${q.id === g_queue_id ? ' active' : ''}"
-                 onclick="selectQueue(${q.id})">${esc(q.name)}</button>`
+                 onclick="selectQueue(${q.id})">${esc(q.name)}${lock(q)}</button>`
     ).join('');
 }
 
@@ -1253,17 +1393,22 @@ function moveToQueueHtml(type, id) {
 }
 
 async function moveToQueue(type, id, queueId) {
-    await api('PUT', `/api/${type}/${id}`, { queue_id: queueId });
+    if (type === 'group')
+        await Promise.all(groupMembers(id).map(s => api('PUT', `/api/shows/${s.id}`, { queue_id: queueId })));
+    else
+        await api('PUT', `/api/${type}/${id}`, { queue_id: queueId });
     loadShows();
     loadMovies();
 }
 
-function selectQueue(queueId) {
+async function selectQueue(queueId) {
+    if (!(await ensureUnlocked(queueId))) return;
     g_queue_id = queueId;
     localStorage.setItem('fi_queue_id', g_queue_id);
     renderQueueTabs();
     loadShows();
     loadMovies();
+    if (g_main_tab === 'calendar') loadCalendar();
 }
 
 function openManageQueuesModal() {
@@ -1291,8 +1436,9 @@ function renderManageQueues() {
         <div class="queue-row" data-id="${q.id}">
           <input type="text" class="queue-name-input" value="${esc(q.name)}"
                  onchange="renameQueue(${q.id}, this.value)">
-          <button class="btn-sm" onclick="assignPinPrompt(${q.id})"
-                  title="${q.pin ? 'Change PIN' : 'Assign PIN'}">PIN</button>
+          <button class="btn-sm pin-btn ${q.has_pin ? 'pin-set' : 'pin-unset'}"
+                  onclick="assignPinPrompt(${q.id})"
+                  title="${q.has_pin ? 'PIN set — click to change or remove' : 'No PIN — click to assign one'}">PIN</button>
           ${isOnly ? '' : `<button class="btn-danger" onclick="deleteQueue(${q.id})">Delete</button>`}
         </div>`;
     }).join('');
@@ -1324,8 +1470,11 @@ async function renameQueue(id, newName) {
 }
 
 async function deleteQueue(id) {
+    if (!(await ensureUnlocked(id))) return;
     if (!confirm('Delete this queue? Its shows and movies will move to the default queue.')) return;
-    await api('DELETE', `/api/queues/${id}`);
+    const r = await api('DELETE', `/api/queues/${id}`);
+    if (r.error) { alert(r.error); return; }
+    delete g_queue_tokens[id];
     if (g_queue_id === id) {
         g_queue_id = g_queues.length ? g_queues[0].id : 1;
         localStorage.setItem('fi_queue_id', g_queue_id);
@@ -1336,10 +1485,28 @@ async function deleteQueue(id) {
     loadMovies();
 }
 
-function assignPinPrompt(id) {
-    const pin = prompt('Enter PIN for this queue (leave blank to remove):');
+async function assignPinPrompt(id) {
+    const q = g_queues.find(x => x.id === id);
+    if (!q) return;
+    if (q.has_pin && !(await ensureUnlocked(id))) return;   // must know the current PIN
+    const pin = await askPin({
+        title:      q.has_pin ? `Change PIN — ${q.name}` : `Set a PIN — ${q.name}`,
+        message:    q.has_pin ? 'Enter a new PIN, or leave it blank to remove the PIN.'
+                              : 'Anyone opening this queue will need this PIN.',
+        allowEmpty: q.has_pin,
+    });
     if (pin === null) return;
-    api('PUT', `/api/queues/${id}`, { pin: pin.trim() });
+    const r = await api('PUT', `/api/queues/${id}`, { pin });
+    if (r.error) { alert(r.error); return; }
+    if (pin) {
+        // Stay unlocked in this browser with the new PIN
+        const u = await api('POST', `/api/queues/${id}/unlock`, { pin });
+        if (u.token) g_queue_tokens[id] = u.token;
+    } else {
+        delete g_queue_tokens[id];
+    }
+    await loadQueues();      // refresh has_pin so the button colour updates
+    renderManageQueues();
 }
 
 // ---------- About modal ---------------------------------------------------
@@ -1376,11 +1543,1070 @@ function aboutModalOverlayClick(e) {
     if (e.target === document.getElementById('about-modal')) closeAboutModal();
 }
 
+// ---------- Show groups ----------------------------------------------------
+// Several shows (Doctor Who 1963 / 2005 / 2023, the Jeopardy family) shown as
+// one card. Members keep their own progress; the group's Last/Next come from
+// the server, worked out across members in air-date order. The group's place
+// in the list is its members' place, so reordering still sends show ids.
+
+let g_show_groups     = [];          // GET /api/groups
+let g_open_group_edit = new Set();   // group ids whose edit panel is open
+
+// Member's distinguishing part: "Doctor Who (2005)" in group "Doctor Who" -> "(2005)"
+function memberLabel(groupName, title) {
+    const g = groupName.toLowerCase(), t = (title || '').toLowerCase();
+    if (t.startsWith(g)) {
+        const rest = title.slice(groupName.length).replace(/^[\s:\-–—]+/, '').trim();
+        if (rest) return rest;
+    }
+    return title;
+}
+
+// List entries for the current Current/Queued tab: plain shows and groups
+function showEntries(shows) {
+    const isQueued = g_shows_tab === 'queued';
+    const entries = [];
+    const groups  = new Map();
+    for (const s of shows.filter(s => (s.queue === 'queued') === isQueued)) {
+        const g = s.group_id && g_show_groups.find(x => x.id === s.group_id);
+        if (!g) { entries.push({ key: s.id, show: s, title: s.title }); continue; }
+        let e = groups.get(g.id);
+        if (!e) {
+            e = { key: 'g' + g.id, group: g, members: [], title: g.name };
+            groups.set(g.id, e);
+            entries.push(e);
+        }
+        e.members.push(s);
+    }
+    for (const e of groups.values())
+        e.members.sort((a, b) => a.group_order - b.group_order);
+
+    const sortOrder = e => e.show ? (e.show.sort_order || 999999)
+                                  : Math.min(...e.members.map(m => m.sort_order || 999999));
+    const rank = e => {
+        const ms = e.show ? [e.show] : e.members;
+        if (ms.every(s => s.status === 'finished')) return 2;
+        if (ms.some(showHasNew)) return 0;
+        return 1;
+    };
+    entries.sort((a, b) => {
+        const d = sortOrder(a) - sortOrder(b);
+        if (d) return d;
+        const r = rank(a) - rank(b);
+        return r || a.title.localeCompare(b.title);
+    });
+    return entries;
+}
+
+function entryIds(e) {
+    return e.show ? [e.show.id] : e.members.map(m => m.id);
+}
+
+// Move one list entry (show id or 'g<id>') before/after another, or to
+// 'start' / 'end', then save the flattened show order.
+function reorderShowEntries(dragKey, targetKey, after) {
+    const entries = showEntries(g_shows);
+    const from = entries.findIndex(e => e.key === dragKey);
+    if (from < 0) return;
+    const [moved] = entries.splice(from, 1);
+    let to;
+    if (targetKey === 'start')    to = 0;
+    else if (targetKey === 'end') to = entries.length;
+    else {
+        to = entries.findIndex(e => e.key === targetKey);
+        if (to < 0) return;
+        if (after) to += 1;
+    }
+    entries.splice(to, 0, moved);
+    const ids = entries.flatMap(entryIds);
+    ids.forEach((id, i) => {
+        const show = g_shows.find(s => s.id === id);
+        if (show) show.sort_order = i + 1;
+    });
+    renderShows(g_shows);
+    api('PUT', '/api/shows/reorder', { order: ids });
+}
+
+function groupEpLabel(groupName, ep) {
+    return `${memberLabel(groupName, ep.show_title)} S${ep.season} &minus; E${ep.episode}`;
+}
+
+function groupCard(e) {
+    const g = e.group, members = e.members;
+    const gid = g.id;
+    const nextMember = g.next && members.find(s => s.id === g.next.show_id);
+    const thumbSrc = (nextMember && nextMember.thumbnail_url)
+        || (members.find(s => s.thumbnail_url) || {}).thumbnail_url || '';
+    const thumbHtml = thumbSrc ? `<img class="card-thumb" src="${esc(thumbSrc)}" alt="" loading="lazy">` : '';
+    const hasNew   = members.some(showHasNew);
+    const allDone  = members.every(s => s.status === 'finished');
+    const queue    = members[0].queue;
+
+    const lastHtml = g.last
+        ? `Last watched: ${groupEpLabel(g.name, g.last)}`
+        : 'Last watched: <em>Not started</em>';
+    let nextHtml = '';
+    if (g.next) {
+        const today = localDateStr(new Date());
+        const airs  = g.next.air_date && g.next.air_date > today ? ` (airs ${esc(g.next.air_date)})` : '';
+        nextHtml = `<div class="${hasNew ? 'ep-next-watch ep-next-watch-new' : 'ep-next-watch'}">
+              Next: ${groupEpLabel(g.name, g.next)}${g.next.title ? ' — ' + esc(g.next.title) : ''}${airs}
+            </div>`;
+    }
+
+    const editOpen = g_open_group_edit.has(gid);
+    const memberRows = members.map((s, i) => `
+          <div class="group-member-row">
+            <span class="group-member-title">${esc(s.title)}</span>
+            <button class="btn-sm" title="Move up" ${i === 0 ? 'disabled' : ''}
+                    onclick="moveGroupMember(${gid},${s.id},-1)">&uarr;</button>
+            <button class="btn-sm" title="Move down" ${i === members.length - 1 ? 'disabled' : ''}
+                    onclick="moveGroupMember(${gid},${s.id},1)">&darr;</button>
+            <button class="btn-danger" onclick="removeGroupMember(${gid},${s.id})">Remove</button>
+          </div>`).join('');
+
+    return `
+    <div class="show-wrap group-wrap${editOpen ? ' panel-open' : ''}" id="gwrap-${gid}"
+         draggable="true"
+         ondragstart="itemDragStart(event,'show','g${gid}')"
+         ondragend="itemDragEnd(event)"
+         ondragover="itemDragOver(event)"
+         ondragleave="itemDragLeave(event)"
+         ondrop="showDrop(event,'g${gid}')">
+
+      <div class="card group-card">
+        <div class="drag-handle" onmousedown="dragHandleDown(event)"
+             ontouchstart="dragHandleDown(event)" title="Drag to reorder">&#x2630;</div>
+        ${thumbHtml}
+        <div class="card-body">
+          <div class="card-top">
+            <div class="card-title">
+              <a class="show-title-link" href="#"
+                 onclick="event.preventDefault();openGroupView(${gid})">${esc(g.name)}</a>
+            </div>
+            <span class="badge badge-group" title="${esc(members.map(s => s.title).join(' · '))}">${members.length} series</span>
+            ${allDone ? '<span class="badge badge-finished">Finished</span>' : ''}
+            ${hasNew ? '<span class="badge badge-new">NEW</span>' : ''}
+          </div>
+          <div class="ep-track">
+            <div class="ep-last-watched" onclick="openGroupView(${gid})">${lastHtml}</div>
+            ${nextHtml}
+          </div>
+          <div class="card-actions">
+            <button class="btn-sm" onclick="toggleGroupEdit(${gid})">Edit</button>
+            <button class="btn-sm" onclick="toggleGroupQueue(${gid},'${queue}')">
+              ${queue === 'queued' ? '→ Current' : '→ Queued'}
+            </button>
+            ${moveToQueueHtml('group', gid)}
+            <button class="btn-danger" onclick="ungroup(${gid})">Ungroup</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="edit-panel${editOpen ? '' : ' hidden'}" id="gedit-${gid}">
+        <div class="form-grid">
+          <div class="field span2">
+            <label for="gname-${gid}">Group name</label>
+            <input type="text" id="gname-${gid}" value="${esc(g.name)}" autocomplete="off">
+          </div>
+          <div class="field span2">
+            <label>Shows in this group</label>
+            ${memberRows}
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn-primary" onclick="saveGroupName(${gid})">Save</button>
+          <button class="btn-cancel"  onclick="toggleGroupEdit(${gid})">Close</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function groupMembers(gid) {
+    return g_shows.filter(s => s.group_id === gid).sort((a, b) => a.group_order - b.group_order);
+}
+
+function toggleGroupEdit(gid) {
+    if (g_open_group_edit.has(gid)) g_open_group_edit.delete(gid);
+    else g_open_group_edit.add(gid);
+    renderShows(g_shows);
+}
+
+async function saveGroupName(gid) {
+    const name = document.getElementById(`gname-${gid}`).value.trim();
+    if (!name) { alert('Group name is required.'); return; }
+    await api('PUT', `/api/groups/${gid}`, { name });
+    g_open_group_edit.delete(gid);
+    loadShows();
+}
+
+async function moveGroupMember(gid, showId, dir) {
+    const ids = groupMembers(gid).map(s => s.id);
+    const i = ids.indexOf(showId), j = i + dir;
+    if (i < 0 || j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    await api('PUT', `/api/groups/${gid}`, { order: ids });
+    loadShows();
+}
+
+async function removeGroupMember(gid, showId) {
+    const left = groupMembers(gid).length - 1;
+    const msg = left < 2
+        ? 'Remove this show from the group? The group only has two shows, so it will be dissolved.'
+        : 'Remove this show from the group? It stays in your list as its own show.';
+    if (!confirm(msg)) return;
+    await api('DELETE', `/api/groups/${gid}/members/${showId}`);
+    if (left < 2) g_open_group_edit.delete(gid);
+    loadShows();
+}
+
+async function ungroup(gid) {
+    if (!confirm('Ungroup these shows? Each goes back to being its own card; nothing is deleted.')) return;
+    await api('DELETE', `/api/groups/${gid}`);
+    g_open_group_edit.delete(gid);
+    loadShows();
+}
+
+// Current/Queued and named-queue moves apply to every member
+async function toggleGroupQueue(gid, current) {
+    const next = current === 'queued' ? 'current' : 'queued';
+    await Promise.all(groupMembers(gid).map(s => api('PUT', `/api/shows/${s.id}`, { queue: next })));
+    loadShows();
+}
+
+// "Group with…" picker in a plain show's Edit panel
+function groupWithHtml(s) {
+    if (s.group_id) return '';
+    const sameList = x => x.queue === s.queue && x.queue_id === s.queue_id;
+    const groupOpts = g_show_groups
+        .filter(g => g_shows.some(x => x.group_id === g.id && sameList(x)))
+        .map(g => `<option value="g:${g.id}">Add to group: ${esc(g.name)}</option>`).join('');
+    const showOpts = g_shows
+        .filter(x => x.id !== s.id && !x.group_id && sameList(x))
+        .sort((a, b) => a.title.localeCompare(b.title))
+        .map(x => `<option value="s:${x.id}">Group with: ${esc(x.title)}</option>`).join('');
+    if (!groupOpts && !showOpts) return '';
+    return `
+          <div class="field span2">
+            <label for="egroup-${s.id}">Show group</label>
+            <select id="egroup-${s.id}">
+              <option value="">Not grouped</option>${groupOpts}${showOpts}
+            </select>
+          </div>`;
+}
+
+async function applyGroupChoice(showId) {
+    const el = document.getElementById(`egroup-${showId}`);
+    if (!el || !el.value) return;
+    const [kind, id] = el.value.split(':');
+    const r = kind === 'g'
+        ? await api('POST', `/api/groups/${id}/members`, { show_id: showId })
+        : await api('POST', '/api/groups', { show_ids: [+id, showId] });
+    if (r.error) alert('Could not group: ' + r.error);
+}
+
+// ---------- Group episode browser -----------------------------------------
+// Same view as a single show's browser; the left pane lists either every
+// member's seasons (premiere order) or years, chosen per group.
+
+let g_gv_group = null;   // group being browsed
+let g_gv_sel   = null;   // {show_id, season} or {year}
+
+function groupViewMode(gid) {
+    return localStorage.getItem(`fi_group_mode_${gid}`) || 'season';
+}
+
+async function openGroupView(gid) {
+    const g = g_show_groups.find(x => x.id === gid);
+    if (!g) return;
+    g_gv_group = g;
+    g_gv_sel   = null;
+    document.getElementById('ev-title').textContent = g.name;
+    document.getElementById('ev-episodes-pane').innerHTML = '<div class="empty">Select a season</div>';
+    document.getElementById('main-view').classList.add('hidden');
+    document.getElementById('episode-view').classList.remove('hidden');
+    document.getElementById('site-title').classList.add('title-nav');
+    document.body.classList.add('ev-open');
+    window.scrollTo(0, 0);
+    renderGroupModeToggle();
+    await loadGroupPane();
+}
+
+function renderGroupModeToggle() {
+    const el = document.getElementById('ev-mode-toggle');
+    const mode = groupViewMode(g_gv_group.id);
+    el.innerHTML = `
+      <button class="tab-btn${mode === 'season' ? ' active' : ''}" onclick="setGroupViewMode('season')">By season</button>
+      <button class="tab-btn${mode === 'year' ? ' active' : ''}" onclick="setGroupViewMode('year')">By year</button>`;
+    el.classList.remove('hidden');
+}
+
+function setGroupViewMode(mode) {
+    localStorage.setItem(`fi_group_mode_${g_gv_group.id}`, mode);
+    g_gv_sel = null;
+    renderGroupModeToggle();
+    document.getElementById('ev-episodes-pane').innerHTML =
+        `<div class="empty">Select a ${mode === 'year' ? 'year' : 'season'}</div>`;
+    loadGroupPane();
+}
+
+// (Re)draw the left pane, keeping the current selection highlighted
+async function loadGroupPane() {
+    const g = g_gv_group;
+    const pane = document.getElementById('ev-seasons-pane');
+    const mode = groupViewMode(g.id);
+    if (!pane.querySelector('.season-btn'))
+        pane.innerHTML = mode === 'year'
+            ? '<div class="empty">Loading every episode list… the first time can take a while for a long-running group.</div>'
+            : '<div class="empty">Loading…</div>';
+
+    if (mode === 'year') {
+        const years = await api('GET', `/api/groups/${g.id}/years`);
+        if (g_gv_group !== g || groupViewMode(g.id) !== 'year') return;
+        if (!Array.isArray(years)) { pane.innerHTML = `<div class="empty">${esc(years.error || 'Failed to load')}</div>`; return; }
+        if (!years.length) { pane.innerHTML = '<div class="empty">No episodes found.</div>'; return; }
+        pane.innerHTML = years.map(y => `
+          <button class="season-btn ${seasonClass(y.watched_count, y.total_episodes)}${g_gv_sel && g_gv_sel.year === y.year ? ' season-active' : ''}"
+                  id="gybtn-${y.year}" onclick="selectGroupYear(${y.year})">
+            ${y.year || 'TBA'}
+            <span class="season-ep-count">${y.watched_count}/${y.total_episodes}</span>
+          </button>`).join('');
+    } else {
+        const seasons = await api('GET', `/api/groups/${g.id}/seasons`);
+        if (g_gv_group !== g || groupViewMode(g.id) !== 'season') return;
+        if (!Array.isArray(seasons)) { pane.innerHTML = `<div class="empty">${esc(seasons.error || 'Failed to load')}</div>`; return; }
+        if (!seasons.length) { pane.innerHTML = '<div class="empty">No seasons found.</div>'; return; }
+        pane.innerHTML = seasons.map(s => {
+            const active = g_gv_sel && g_gv_sel.show_id === s.show_id && g_gv_sel.season === s.season;
+            return `
+          <button class="season-btn ${seasonClass(s.watched_count, s.total_episodes)}${active ? ' season-active' : ''}"
+                  id="gsbtn-${s.show_id}-${s.season}" onclick="selectGroupSeason(${s.show_id},${s.season})"
+                  oncontextmenu="seasonContextMenu(event,${s.show_id},${s.season},${s.watched_count},${s.total_episodes})"
+                  title="${esc(s.show_title)}${s.air_date ? ' — ' + esc(s.air_date) : ''}">
+            <span class="season-btn-series">${esc(memberLabel(g.name, s.show_title))}</span>
+            S${String(s.season).padStart(2, '0')}
+            <span class="season-ep-count">${s.watched_count}/${s.total_episodes}</span>
+          </button>`;
+        }).join('');
+    }
+}
+
+function markGroupPaneActive(btnId) {
+    document.querySelectorAll('#ev-seasons-pane .season-btn').forEach(b => b.classList.remove('season-active'));
+    const btn = document.getElementById(btnId);
+    if (btn) btn.classList.add('season-active');
+}
+
+async function selectGroupSeason(showId, season) {
+    g_gv_sel = { show_id: showId, season };
+    markGroupPaneActive(`gsbtn-${showId}-${season}`);
+    await loadGroupEpisodes(`show_id=${showId}&season=${season}`);
+}
+
+async function selectGroupYear(year) {
+    g_gv_sel = { year };
+    markGroupPaneActive(`gybtn-${year}`);
+    await loadGroupEpisodes(`year=${year}`);
+}
+
+async function loadGroupEpisodes(query) {
+    const pane = document.getElementById('ev-episodes-pane');
+    pane.innerHTML = '<div class="empty">Loading episodes…</div>';
+    pane.scrollTop = 0;
+    const eps = await api('GET', `/api/groups/${g_gv_group.id}/episodes?${query}`);
+    if (!Array.isArray(eps)) { pane.innerHTML = `<div class="empty">${esc(eps.error || 'Failed to load')}</div>`; return; }
+    if (!eps.length) { pane.innerHTML = '<div class="empty">No episodes found.</div>'; return; }
+    const groupName = g_gv_group.name;
+    const seasonView = g_gv_sel && g_gv_sel.season;
+    pane.innerHTML = (seasonView ? evAllRowHtml(g_gv_sel.show_id, g_gv_sel.season) : '') + eps.map(ep => {
+        const epTitleJson = JSON.stringify(ep.title || '').replace(/"/g, '&quot;');
+        const cardId = `gepcard-${ep.show_id}-${ep.season}-${ep.episode}`;
+        return `
+        <div class="ep-card${ep.watched ? ' ep-card-watched' : ''}" id="${cardId}">
+          <div class="ep-card-body">
+            <div class="ep-card-series">${esc(memberLabel(groupName, ep.show_title))}</div>
+            <div class="ep-card-heading">
+              <span class="ep-card-num">S${ep.season}E${String(ep.episode).padStart(3, '0')}</span>
+              <span class="ep-card-title ep-card-title-link"
+                    onclick="openGroupEpLink(event,${JSON.stringify(ep.episode_url).replace(/"/g, '&quot;')},${ep.show_id},${ep.season},${ep.episode})"
+              >${esc(ep.title || '—')}</span>
+            </div>
+            ${ep.air_date ? `<div class="ep-card-date">${esc(ep.air_date)}</div>` : ''}
+          </div>
+          <div class="ep-card-actions">
+            <label class="ep-watched-toggle">
+              <input type="checkbox" ${ep.watched ? 'checked' : ''} data-aired="${isAired(ep) ? 1 : 0}"
+                     onchange="groupToggleWatched(${ep.show_id},${ep.season},${ep.episode},this.checked,${ep.season_total})">
+              <span>Watched</span>
+            </label>
+            <button class="btn-sm" onclick="openEpisodeCast(${ep.show_id},${ep.season},${ep.episode},${epTitleJson})">Cast</button>
+          </div>
+        </div>`;
+    }).join('');
+    syncEvAllBox();
+}
+
+// Group lists don't prefetch IMDB IDs: open the popup at once with IMDB
+// disabled, then switch it on when the (cached) lookup returns.
+async function openGroupEpLink(event, tmdbUrl, showId, season, episode) {
+    openEpLinkPopup(event, tmdbUrl, '');
+    const r = await api('GET', `/api/shows/${showId}/episodes/${season}/${episode}/imdb`);
+    const imdbEl = document.getElementById('ep-link-imdb');
+    if (r.imdb_id && !document.getElementById('ep-link-popup').classList.contains('hidden')) {
+        imdbEl.href = `https://www.imdb.com/title/${r.imdb_id}/`;
+        imdbEl.classList.remove('ep-link-btn-disabled');
+    }
+}
+
+async function groupToggleWatched(showId, season, episode, watched, seasonTotal) {
+    await api('PUT', `/api/shows/${showId}/episodes/${season}/${episode}/watched`,
+              { watched, season_total: seasonTotal });
+    g_cal_cache = null;
+    const card = document.getElementById(`gepcard-${showId}-${season}-${episode}`);
+    if (card) card.classList.toggle('ep-card-watched', watched);
+    syncEvAllBox();
+    loadGroupPane();   // refresh watched counts
+}
+
+// ---------- Episode browser: season "All aired episodes" checkbox ----------
+// One request via the season endpoint (same rules as the right-click menu:
+// aired episodes only, position only moves forward). Season views only — a
+// By year list spans several seasons and series.
+
+function isAired(ep) {
+    return !!ep.air_date && ep.air_date <= localDateStr(new Date());
+}
+
+// Built like an episode card (empty body, same actions area, an invisible
+// stand-in for the Cast button) so its checkbox sits directly above the
+// episodes' Watched checkboxes.
+function evAllRowHtml(showId, season) {
+    return `
+      <div class="ep-card ev-all-card">
+        <div class="ep-card-body"></div>
+        <div class="ep-card-actions">
+          <label class="ep-watched-toggle" title="Mark every aired episode in this season">
+            <input type="checkbox" id="ev-all"
+                   onchange="evSeasonAll(${showId},${season},this.checked)">
+            <span>Watched All</span>
+          </label>
+          <button class="btn-sm ev-all-spacer" tabindex="-1" aria-hidden="true">Cast</button>
+        </div>
+      </div>`;
+}
+
+// Checked / indeterminate / empty from the aired episodes' own checkboxes
+function syncEvAllBox() {
+    const cb = document.getElementById('ev-all');
+    if (!cb) return;
+    const boxes = [...document.querySelectorAll('#ev-episodes-pane .ep-card input[type=checkbox][data-aired="1"]')];
+    const n = boxes.filter(b => b.checked).length;
+    cb.disabled      = boxes.length === 0;
+    cb.checked       = boxes.length > 0 && n === boxes.length;
+    cb.indeterminate = n > 0 && n < boxes.length;
+}
+
+async function evSeasonAll(showId, season, watched) {
+    g_ctx_season = { showId, season };
+    await markSeasonWatched(watched);   // refreshes both panes on success
+    syncEvAllBox();                     // and puts the box back if it failed
+}
+
+// ---------- Season right-click menu (episode browser) -------------------------
+// Whole-season watched/unwatched for a show's season: in the "Last watched"
+// quick picker, the single-show browser, and a group's By season view.
+
+let g_ctx_season = null;   // {showId, season} the open menu acts on
+
+function seasonContextMenu(event, showId, season, watched, total) {
+    event.preventDefault();
+    event.stopPropagation();
+    g_ctx_season = { showId, season };
+    const items = [];
+    if (total === 0 || watched < total)
+        items.push(`<button class="menu-item" onclick="markSeasonWatched(true)">Mark season ${season} watched</button>`);
+    if (watched > 0)
+        items.push(`<button class="menu-item" onclick="markSeasonWatched(false)">Mark season ${season} unwatched</button>`);
+    const menu = document.getElementById('season-ctx-menu');
+    menu.innerHTML = items.join('');
+    menu.classList.remove('hidden');
+    // Keep the menu on screen near the pointer
+    const w = menu.offsetWidth, h = menu.offsetHeight;
+    menu.style.left = Math.max(4, Math.min(event.clientX, window.innerWidth  - w - 4)) + 'px';
+    menu.style.top  = Math.max(4, Math.min(event.clientY, window.innerHeight - h - 4)) + 'px';
+}
+
+function closeSeasonMenu() {
+    document.getElementById('season-ctx-menu').classList.add('hidden');
+}
+
+// Long-press = right-click on touch screens. iOS Safari never fires
+// 'contextmenu', so a ~500 ms hold on a season button dispatches one to the
+// button's own oncontextmenu handler. Moving the finger (a scroll) cancels;
+// the tap that ends a long-press is swallowed so it doesn't also select.
+const LONG_PRESS_MS   = 500;
+const LONG_PRESS_MOVE = 10;   // px of movement that counts as a scroll
+let g_lp_timer = null, g_lp_start = null, g_lp_fired = false;
+
+function cancelLongPress() {
+    clearTimeout(g_lp_timer);
+    g_lp_timer = null;
+}
+
+document.addEventListener('touchstart', e => {
+    g_lp_fired = false;
+    const btn = e.target.closest('.season-btn[oncontextmenu]');
+    if (!btn || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    g_lp_start = { x: t.clientX, y: t.clientY };
+    cancelLongPress();
+    g_lp_timer = setTimeout(() => {
+        g_lp_timer = null;
+        g_lp_fired = true;
+        btn.dispatchEvent(new MouseEvent('contextmenu', {
+            bubbles: true, cancelable: true, clientX: g_lp_start.x, clientY: g_lp_start.y,
+        }));
+    }, LONG_PRESS_MS);
+}, { passive: true });
+
+document.addEventListener('touchmove', e => {
+    if (!g_lp_timer || !g_lp_start) return;
+    const t = e.touches[0];
+    if (Math.abs(t.clientX - g_lp_start.x) > LONG_PRESS_MOVE ||
+        Math.abs(t.clientY - g_lp_start.y) > LONG_PRESS_MOVE) cancelLongPress();
+}, { passive: true });
+
+document.addEventListener('touchend',    cancelLongPress, { passive: true });
+document.addEventListener('touchcancel', cancelLongPress, { passive: true });
+
+// Capture phase: runs before the button's onclick and the menu's outside-click close
+document.addEventListener('click', e => {
+    if (!g_lp_fired) return;
+    g_lp_fired = false;
+    e.preventDefault();
+    e.stopPropagation();
+}, true);
+
+async function markSeasonWatched(watched) {
+    if (!g_ctx_season) return;
+    const { showId, season } = g_ctx_season;
+    closeSeasonMenu();
+    const r = await api('PUT', `/api/shows/${showId}/seasons/${season}/watched`, { watched });
+    if (r.error) { alert('Could not update the season: ' + r.error); return; }
+    g_cal_cache = null;
+
+    if (g_popup_show_id === showId) {
+        // Quick picker (modal over the main list): redraw it and the card behind
+        const seasons = await api('GET', `/api/shows/${showId}/seasons`);
+        if (!seasons.error) renderSeasons(showId, seasons, g_popup_season);
+        if (g_popup_season === season) await loadPopupEpisodes(showId, season);
+        loadShows();
+    } else if (g_gv_group) {
+        await loadGroupPane();
+        if (g_gv_sel && g_gv_sel.show_id === showId && g_gv_sel.season === season)
+            selectGroupSeason(showId, season);
+    } else {
+        const seasons = await api('GET', `/api/shows/${showId}/seasons`);
+        if (!seasons.error)
+            renderSeasons(showId, seasons, g_ev_season, 'ev-seasons-pane', 'selectEpisodeViewSeason');
+        if (g_ev_season === season) selectEpisodeViewSeason(showId, season);
+    }
+}
+
+// ---------- Settings modal ------------------------------------------------
+// TMDB credentials and port are saved server-side (DB settings table, which
+// overrides fi_config.json). Display prefs are per-browser (localStorage).
+// Secrets are never sent back to the browser — only "set", last 4 chars and
+// where the value came from.
+
+let g_settings = null;   // last GET /api/settings response
+
+async function openSettingsModal() {
+    document.getElementById('menu-dropdown').classList.add('hidden');
+    document.getElementById('settings-modal').classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+    const body = document.getElementById('settings-body');
+    body.innerHTML = '<div class="empty">Loading…</div>';
+    g_settings = await api('GET', '/api/settings');
+    if (g_settings.error) {
+        body.innerHTML = `<div class="empty">Could not load settings: ${esc(g_settings.error)}</div>`;
+        return;
+    }
+    renderSettings();
+}
+
+function closeSettingsModal() {
+    document.getElementById('settings-modal').classList.add('hidden');
+    document.body.style.overflow = '';
+}
+
+function settingsModalClick(event) {
+    if (event.target === document.getElementById('settings-modal')) closeSettingsModal();
+}
+
+// Password field showing whether a secret is saved, plus where it came from
+function secretFieldHtml(id, label, info) {
+    const placeholder = info.set
+        ? (info.hint ? `Saved — ends in …${info.hint}` : 'Saved')
+        : 'Not set';
+    const revert = info.source === 'settings'
+        ? ` · <a href="#" onclick="clearSecretOverride('${id}');return false;">use config file value</a>`
+        : '';
+    return `
+      <div class="field span2">
+        <label for="set-${id}">${label}</label>
+        <input type="password" id="set-${id}" placeholder="${esc(placeholder)}" autocomplete="off">
+        <div class="settings-note">Source: ${esc(info.source)}${revert}</div>
+      </div>`;
+}
+
+function renderSettings() {
+    const s = g_settings;
+    const zoomOpts = [];
+    for (let z = ZOOM_MIN; z <= ZOOM_MAX + 0.001; z += ZOOM_STEP) {
+        const v = +z.toFixed(2);
+        zoomOpts.push(`<option value="${v}"${Math.abs(v - g_zoom) < 0.001 ? ' selected' : ''}>${Math.round(v * 100)}%</option>`);
+    }
+    const startTab   = localStorage.getItem('fi_startup_tab') || 'last';
+    const startQueue = localStorage.getItem('fi_startup_queue') || 'last';
+    const tabOpt = (v, label) => `<option value="${v}"${startTab === v ? ' selected' : ''}>${label}</option>`;
+    const queueOpts = g_queues.map(q =>
+        `<option value="${q.id}"${String(q.id) === startQueue ? ' selected' : ''}>${esc(q.name)}</option>`).join('');
+
+    const portLocked  = s.port.locked;
+    const restartNote = s.port.value !== s.port.running
+        ? `<div class="settings-note settings-warn">Restart FlickImp to move from port ${s.port.running} to ${s.port.value}.</div>`
+        : '';
+
+    document.getElementById('settings-body').innerHTML = `
+      <h3 class="settings-heading">TMDB</h3>
+      <div class="form-grid">
+        ${secretFieldHtml('tmdb_bearer_token', 'API Read Access Token (preferred)', s.tmdb_bearer_token)}
+        ${secretFieldHtml('tmdb_api_key', 'API Key (v3, fallback)', s.tmdb_api_key)}
+        <div class="span2 settings-inline">
+          <button class="btn-sm" onclick="testTmdbSettings()">Test connection</button>
+          <span id="settings-test-result" class="settings-note"></span>
+        </div>
+      </div>
+      <div class="settings-note">Leave a field blank to keep the saved value.
+        Get a token at <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org</a>.</div>
+
+      <h3 class="settings-heading">Server</h3>
+      <div class="form-grid">
+        <div class="field">
+          <label for="set-port">Web port</label>
+          <input type="number" id="set-port" min="1" max="65535" value="${s.port.value}"${portLocked ? ' disabled' : ''}>
+        </div>
+        <div class="field settings-port-note">
+          <div class="settings-note">${portLocked
+              ? 'Set by --port on the command line; change it there.'
+              : `Source: ${esc(s.port.source)}. Takes effect when FlickImp restarts.`}</div>
+        </div>
+        <div class="span2">${restartNote}</div>
+      </div>
+
+      <h3 class="settings-heading">Display <span class="settings-sub">(this browser only)</span></h3>
+      <div class="form-grid">
+        <div class="field">
+          <label for="set-zoom">Zoom</label>
+          <select id="set-zoom">${zoomOpts.join('')}</select>
+        </div>
+        <div class="field">
+          <label for="set-startup-tab">Open on</label>
+          <select id="set-startup-tab">
+            ${tabOpt('last', 'Last used tab')}${tabOpt('shows', 'Shows')}${tabOpt('movies', 'Movies')}${tabOpt('calendar', 'Calendar')}
+          </select>
+        </div>
+        <div class="field span2">
+          <label for="set-startup-queue">Start in queue</label>
+          <select id="set-startup-queue">
+            <option value="last"${startQueue === 'last' ? ' selected' : ''}>Last used queue</option>
+            ${queueOpts}
+          </select>
+        </div>
+      </div>
+
+      <div id="settings-save-result" class="settings-note"></div>
+      <div class="form-actions">
+        <button class="btn-cancel" onclick="closeSettingsModal()">Cancel</button>
+        <button class="btn-primary" onclick="saveSettings()">Save</button>
+      </div>`;
+}
+
+// Values typed into the two secret fields (blank = keep saved value)
+function typedSecrets() {
+    const body = {};
+    for (const key of ['tmdb_bearer_token', 'tmdb_api_key']) {
+        const v = document.getElementById(`set-${key}`).value.trim();
+        if (v) body[key] = v;
+    }
+    return body;
+}
+
+async function testTmdbSettings() {
+    const out = document.getElementById('settings-test-result');
+    out.className = 'settings-note';
+    out.textContent = 'Testing…';
+    const r = await api('POST', '/api/settings/test-tmdb', typedSecrets());
+    out.textContent = r.message || r.error || 'Unknown result';
+    out.className = 'settings-note ' + (r.ok ? 'settings-ok' : 'settings-warn');
+}
+
+async function clearSecretOverride(key) {
+    if (!confirm('Remove the value saved here and use the one from fi_config.json?')) return;
+    g_settings = await api('PUT', '/api/settings', { [key]: '' });
+    renderSettings();
+}
+
+async function saveSettings() {
+    const out  = document.getElementById('settings-save-result');
+    const body = typedSecrets();
+    const portEl = document.getElementById('set-port');
+    const port   = parseInt(portEl.value);
+    if (!portEl.disabled && port !== g_settings.port.value) {
+        if (!(port >= 1 && port <= 65535)) {
+            out.className = 'settings-note settings-warn';
+            out.textContent = 'Port must be between 1 and 65535.';
+            return;
+        }
+        body.port = port;
+    }
+
+    // Per-browser display prefs
+    g_zoom = parseFloat(document.getElementById('set-zoom').value);
+    localStorage.setItem('fi_zoom', g_zoom);
+    applyZoom();
+    localStorage.setItem('fi_startup_tab', document.getElementById('set-startup-tab').value);
+    const startQueue = document.getElementById('set-startup-queue').value;
+    if (startQueue === 'last') localStorage.removeItem('fi_startup_queue');
+    else localStorage.setItem('fi_startup_queue', startQueue);
+
+    if (Object.keys(body).length) {
+        const r = await api('PUT', '/api/settings', body);
+        if (r.error) {
+            out.className = 'settings-note settings-warn';
+            out.textContent = 'Save failed: ' + r.error;
+            return;
+        }
+        g_settings = r;
+        if (r.port.value !== r.port.running) {
+            renderSettings();
+            const again = document.getElementById('settings-save-result');
+            again.className = 'settings-note settings-ok';
+            again.textContent = 'Saved. Restart FlickImp for the new port to take effect.';
+            return;
+        }
+    }
+    closeSettingsModal();
+}
+
+// ---------- Backup / Restore modal ---------------------------------------
+// The daemon exports/imports plain JSON; gzip is done here with the
+// browser's CompressionStream, so the server needs no compression library.
+
+let g_backup_variants = null;   // { lite: {blob, counts}, full: {blob, counts} }
+let g_backup_include  = new Set();  // PIN-protected queue ids to include (must be unlocked)
+let g_backup_seq      = 0;          // ignore stale backup builds when boxes change quickly
+let g_restore_text    = null;   // decompressed JSON text of the chosen file
+let g_restore_data    = null;   // parsed backup
+
+const CAN_GZIP = typeof CompressionStream !== 'undefined' && typeof DecompressionStream !== 'undefined';
+
+function fmtBytes(n) {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+async function gzipText(text) {
+    const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
+    return new Response(stream).blob();
+}
+
+async function gunzipBytes(buf) {
+    const stream = new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return new Response(stream).text();
+}
+
+function backupClientPrefs() {
+    const prefs = {};
+    for (const k of ['fi_zoom', 'fi_startup_tab', 'fi_startup_queue']) {
+        const v = localStorage.getItem(k);
+        if (v !== null) prefs[k] = v;
+    }
+    return prefs;
+}
+
+function backupCounts(b) {
+    const n = (sec, t) => (b[sec] && Array.isArray(b[sec][t])) ? b[sec][t].length : 0;
+    return {
+        queues:  n('tables', 'queues'),
+        shows:   n('tables', 'shows'),
+        movies:  n('tables', 'movies'),
+        watches: n('tables', 'episode_watches'),
+        cast:    n('caches', 'show_cast') + n('caches', 'movie_cast') + n('caches', 'episode_cast'),
+        people:  n('caches', 'people'),
+    };
+}
+
+function countsLine(c) {
+    return `${c.shows} shows · ${c.movies} movies · ${c.queues} queues · ${c.watches} watched episodes`;
+}
+
+async function openBackupModal() {
+    document.getElementById('menu-dropdown').classList.add('hidden');
+    document.getElementById('backup-modal').classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+    g_restore_text = g_restore_data = null;
+    g_backup_include = new Set(g_queues.filter(q => q.has_pin && g_queue_tokens[q.id]).map(q => q.id));
+    renderBackupModal();
+    renderBackupPinQueues();
+    await prepareBackupVariants();
+}
+
+function closeBackupModal() {
+    document.getElementById('backup-modal').classList.add('hidden');
+    document.body.style.overflow = '';
+}
+
+function backupModalClick(event) {
+    if (event.target === document.getElementById('backup-modal')) closeBackupModal();
+}
+
+function renderBackupModal() {
+    document.getElementById('backup-body').innerHTML = `
+      <h3 class="settings-heading">Backup</h3>
+      <div id="backup-pin-queues"></div>
+      <div id="backup-options"><div class="empty">Preparing backup…</div></div>
+
+      <h3 class="settings-heading">Restore</h3>
+      <div class="settings-note">Choose a FlickImp backup file (.json.gz or .json).</div>
+      <input type="file" id="restore-file" class="restore-file"
+             accept=".gz,.json,application/gzip,application/json"
+             onchange="restoreFileChosen(this)">
+      <div id="restore-details"></div>`;
+}
+
+// Fetch the full backup once, then build both variants and compress each so
+// the sizes shown are the real download sizes.
+async function prepareBackupVariants() {
+    const seq  = ++g_backup_seq;
+    const box  = document.getElementById('backup-options');
+    box.innerHTML = '<div class="empty">Preparing backup…</div>';
+    const exclude = g_queues.filter(q => q.has_pin && !g_backup_include.has(q.id)).map(q => q.id);
+    const full = await api('GET', `/api/backup?caches=1${exclude.length ? '&exclude=' + exclude.join(',') : ''}`);
+    if (seq !== g_backup_seq) return;   // a newer build superseded this one
+    if (full.error) {
+        box.innerHTML = `<div class="empty">Could not create backup: ${esc(full.error)}</div>`;
+        return;
+    }
+    full.client = backupClientPrefs();
+    const lite = Object.assign({}, full);
+    delete lite.caches;
+
+    const buildVariant = async obj => {
+        const text = JSON.stringify(obj);
+        const blob = CAN_GZIP ? await gzipText(text) : new Blob([text], { type: 'application/json' });
+        return { blob, counts: backupCounts(obj) };
+    };
+    const variants = { lite: await buildVariant(lite), full: await buildVariant(full) };
+    if (seq !== g_backup_seq) return;
+    g_backup_variants = variants;
+    const lc = g_backup_variants.lite.counts, fc = g_backup_variants.full.counts;
+    const leftOut = (full.excluded_queues || []).map(q => q.name);
+
+    box.innerHTML = `
+      <div class="settings-note">${countsLine(lc)}</div>
+      ${leftOut.length ? `<div class="settings-note">Leaves out: ${esc(leftOut.join(', '))}</div>` : ''}
+      <label class="choice-card">
+        <input type="radio" name="backup-variant" value="lite" checked>
+        <span class="choice-text">
+          <span class="choice-title">Data and settings <span class="choice-size">${fmtBytes(g_backup_variants.lite.blob.size)}</span></span>
+          <span class="choice-desc">Queues, shows, movies, watch history, TMDB credentials and display preferences.
+            Cast lists and IMDB links are re-fetched from TMDB as needed after a restore.</span>
+        </span>
+      </label>
+      <label class="choice-card">
+        <input type="radio" name="backup-variant" value="full">
+        <span class="choice-text">
+          <span class="choice-title">Everything, including TMDB cache <span class="choice-size">${fmtBytes(g_backup_variants.full.blob.size)}</span></span>
+          <span class="choice-desc">Also keeps ${fc.cast} cast entries for ${fc.people} people plus cached episode IMDB links,
+            so a restored copy needs no TMDB lookups to show them.</span>
+        </span>
+      </label>
+      <div class="settings-note settings-warn">The backup contains your TMDB credentials. Keep the file private.</div>
+      ${CAN_GZIP ? '' : '<div class="settings-note settings-warn">This browser can’t compress files, so the backup will be plain JSON.</div>'}
+      <div class="form-actions">
+        <button class="btn-primary" onclick="downloadBackup()">Download backup</button>
+      </div>`;
+}
+
+// PIN-protected queues: included only once unlocked; untick to leave one out
+function renderBackupPinQueues() {
+    const el = document.getElementById('backup-pin-queues');
+    const pinQs = g_queues.filter(q => q.has_pin);
+    if (!pinQs.length) { el.innerHTML = ''; return; }
+    el.innerHTML = `
+      <div class="settings-note">PIN-protected queues are included only after you enter their PIN.</div>
+      ${pinQs.map(q => `
+      <label class="check-row">
+        <input type="checkbox" ${g_backup_include.has(q.id) ? 'checked' : ''}
+               onchange="backupQueueToggle(${q.id}, this)">
+        Include ${g_queue_tokens[q.id] ? '🔓' : '🔒'} ${esc(q.name)}
+      </label>`).join('')}`;
+}
+
+async function backupQueueToggle(queueId, cb) {
+    if (cb.checked) {
+        if (!(await ensureUnlocked(queueId))) { cb.checked = false; return; }
+        g_backup_include.add(queueId);
+    } else {
+        g_backup_include.delete(queueId);
+    }
+    renderBackupPinQueues();
+    prepareBackupVariants();
+}
+
+function downloadBackup() {
+    const which = document.querySelector('input[name="backup-variant"]:checked').value;
+    const blob  = g_backup_variants[which].blob;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `flickimp-backup-${localDateStr(new Date())}${which === 'full' ? '-full' : ''}.json${CAN_GZIP ? '.gz' : ''}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
+async function restoreFileChosen(input) {
+    const box = document.getElementById('restore-details');
+    g_restore_text = g_restore_data = null;
+    const file = input.files && input.files[0];
+    if (!file) { box.innerHTML = ''; return; }
+    try {
+        const buf = new Uint8Array(await file.arrayBuffer());
+        const gz  = buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b;
+        if (gz && !CAN_GZIP) throw new Error('this browser can’t decompress .gz files');
+        const text = gz ? await gunzipBytes(buf) : new TextDecoder().decode(buf);
+        const data = JSON.parse(text);
+        if (data.format !== 'flickimp-backup') throw new Error('not a FlickImp backup file');
+        g_restore_text = text;
+        g_restore_data = data;
+    } catch (err) {
+        box.innerHTML = `<div class="settings-note settings-warn">Can’t read that file: ${esc(err.message)}</div>`;
+        return;
+    }
+
+    const d = g_restore_data;
+    const c = backupCounts(d);
+    const created = d.created ? new Date(d.created).toLocaleString() : 'unknown date';
+    const settingsKeys = Object.keys(d.settings || {});
+    box.innerHTML = `
+      ${(d.excluded_queues || []).length ? `
+      <div class="settings-note settings-warn">This backup leaves out
+        ${esc(d.excluded_queues.map(q => q.name).join(', '))}. Merge keeps those queues here;
+        Replace deletes them on this server.</div>` : ''}
+      <div class="restore-summary">
+        <div><strong>${esc(created)}</strong> · FlickImp ${esc(d.app_version || '?')}</div>
+        <div>${countsLine(c)}</div>
+        <div>${d.caches ? `Includes TMDB cache (${c.cast} cast entries)` : 'No TMDB cache'}
+             · ${settingsKeys.length ? 'Includes settings: ' + esc(settingsKeys.join(', ')) : 'No settings'}</div>
+      </div>
+      <label class="choice-card">
+        <input type="radio" name="restore-mode" value="merge" checked>
+        <span class="choice-text">
+          <span class="choice-title">Merge</span>
+          <span class="choice-desc">Add queues, shows and movies that aren’t already here. Anything already in the same
+            queue is left alone, including its watch progress. Settings are only filled in where none are set.</span>
+        </span>
+      </label>
+      <label class="choice-card">
+        <input type="radio" name="restore-mode" value="replace">
+        <span class="choice-text">
+          <span class="choice-title">Replace</span>
+          <span class="choice-desc">Delete all current queues, shows, movies and watch history and load the backup exactly.
+            Settings in the backup overwrite current ones.</span>
+        </span>
+      </label>
+      <div id="restore-result" class="settings-note"></div>
+      <div class="form-actions">
+        <button class="btn-danger" onclick="runRestore()">Restore</button>
+      </div>`;
+}
+
+async function runRestore() {
+    if (!g_restore_text) return;
+    const mode = document.querySelector('input[name="restore-mode"]:checked').value;
+    const out  = document.getElementById('restore-result');
+    if (mode === 'replace') {
+        for (const q of g_queues.filter(x => x.has_pin)) {
+            if (!(await ensureUnlocked(q.id))) {
+                out.className = 'settings-note settings-warn';
+                out.textContent = `Replace deletes every queue, so each PIN-protected queue must be unlocked first (${q.name} wasn't).`;
+                return;
+            }
+        }
+    }
+    const msg = mode === 'replace'
+        ? 'Replace ALL current shows, movies, queues and watch history with this backup?\n\n'
+          + 'A copy of the current database is saved next to it as flickimp.db.pre-restore.'
+        : 'Merge this backup into your current data?';
+    if (!confirm(msg)) return;
+
+    out.className = 'settings-note';
+    out.textContent = 'Restoring…';
+    const res = await fetch(`/api/restore?mode=${mode}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: g_restore_text,
+    });
+    const r = await res.json();
+    if (!res.ok || r.error) {
+        out.className = 'settings-note settings-warn';
+        out.textContent = 'Restore failed — nothing was changed. ' + (r.error || '');
+        return;
+    }
+
+    // Per-browser prefs travel in the backup; apply them on a full replace only
+    if (mode === 'replace' && g_restore_data.client) {
+        for (const [k, v] of Object.entries(g_restore_data.client)) localStorage.setItem(k, v);
+        g_zoom = parseFloat(localStorage.getItem('fi_zoom')) || 1;
+        applyZoom();
+    }
+
+    const k = r.counts || {};
+    const parts = mode === 'replace'
+        ? [`${k.shows || 0} shows`, `${k.movies || 0} movies`, `${k.queues || 0} queues`,
+           `${k.episode_watches || 0} watched episodes`]
+        : [`${k.shows || 0} shows added (${k.shows_skipped || 0} already here)`,
+           `${k.movies || 0} movies added (${k.movies_skipped || 0} already here)`,
+           `${k.queues || 0} new queues`];
+    if (r.settings_applied && r.settings_applied.length)
+        parts.push('settings: ' + r.settings_applied.join(', '));
+    out.className = 'settings-note settings-ok';
+    out.textContent = 'Restored: ' + parts.join(' · ') + '.';
+
+    g_cal_cache = null;
+    await loadQueues();
+    loadShows();
+    loadMovies();
+    if (g_main_tab === 'calendar') loadCalendar();
+}
+
 // ===== Release Calendar Module =====
-let g_cal_date = new Date();
-let g_cal_cache = null;
+// Data comes from TMDB via /api/shows/:id/episodes (one season per show), so
+// the event list is cached in g_cal_cache and only refetched when it has been
+// invalidated (show/movie list reloads, watched toggles) or on Refresh.
+
+// Local-time YYYY-MM-DD (toISOString() would give the UTC date)
+function localDateStr(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 function navigateCalendar(deltaMonths) {
+    // Pin to the 1st first, or Jan 31 + 1 month rolls over into March
+    g_cal_date.setDate(1);
     g_cal_date.setMonth(g_cal_date.getMonth() + deltaMonths);
     renderCalendarGrid();
 }
@@ -1469,7 +2695,7 @@ function renderCalendarGrid() {
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const prevDaysInMonth = new Date(year, month, 0).getDate();
 
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = localDateStr(new Date());
     const dayHeaders = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
     let html = '<div class="calendar-header-row">';
@@ -1486,13 +2712,15 @@ function renderCalendarGrid() {
 
     // Days in current month
     for (let day = 1; day <= daysInMonth; day++) {
-        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const dateStr = localDateStr(new Date(year, month, day));
         const isToday = dateStr === todayStr;
         const events = (g_cal_cache || []).filter(e => e.date === dateStr);
 
+        const dow = dayHeaders[(firstDayIndex + day - 1) % 7];
+
         html += `
-        <div class="calendar-day${isToday ? ' today' : ''}">
-            <div class="day-top"><span class="day-number">${day}</span></div>
+        <div class="calendar-day${isToday ? ' today' : ''}${events.length ? ' has-events' : ''}">
+            <div class="day-top"><span class="day-dow">${dow}</span><span class="day-number">${day}</span></div>
             <div class="day-events">
                 ${events.map(ev => `
                     <div class="cal-event ${ev.type}${ev.watched ? ' watched' : ''}" 
@@ -1519,4 +2747,4 @@ function renderCalendarGrid() {
     html += '</div>';
     grid.innerHTML = html;
 }
-// SN: 00004
+// SN: 00006

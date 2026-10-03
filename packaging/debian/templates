@@ -1,0 +1,11 @@
+Template: flickimp/purge_data
+Type: boolean
+Default: false
+Description: Delete FlickImp's configuration and database?
+ FlickImp is being purged. Its data can be deleted as well:
+ .
+   /etc/flickimp      configuration, including your TMDB credentials
+   /var/lib/flickimp  database: shows, movies, queues and watch history
+ .
+ This cannot be undone. Choose No to keep these files; installing
+ FlickImp again will pick them up where you left off.

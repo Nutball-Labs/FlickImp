@@ -1,0 +1,39 @@
+#!/bin/sh
+# Debian postrm — runs after package files are removed.
+# Same job as the RPM %postun scriptlet (cmake/rpm_postun.sh), plus purge
+# handling: on purge, ask (debconf, default No) before deleting
+# /etc/flickimp and /var/lib/flickimp. If nobody can be asked (noninteractive
+# frontend, no debconf) the files are kept. The flickimp system account is
+# always kept, per Debian policy.
+# $1: remove | purge | upgrade | failed-upgrade | abort-install | abort-upgrade | disappear
+set -e
+
+# Once debconf is loaded, stdout is its command channel: messages go to stderr
+if [ "$1" = "purge" ] && [ -e /usr/share/debconf/confmodule ]; then
+    . /usr/share/debconf/confmodule
+fi
+
+systemctl daemon-reload 2>/dev/null || true
+
+if [ "$1" = "purge" ]; then
+    DELETE=false
+    if command -v db_input >/dev/null 2>&1; then
+        # db_input returns non-zero when the question isn't shown; RET is then the default (false)
+        db_input high flickimp/purge_data || true
+        db_go || true
+        if db_get flickimp/purge_data; then DELETE="$RET"; fi
+    fi
+
+    if [ "$DELETE" = "true" ]; then
+        rm -rf /etc/flickimp /var/lib/flickimp
+        echo "FlickImp configuration and database deleted." >&2
+    else
+        echo "FlickImp purged; configuration and database kept in /etc/flickimp and /var/lib/flickimp." >&2
+    fi
+
+    if command -v db_purge >/dev/null 2>&1; then db_purge || true; fi
+fi
+
+exit 0
+
+# SN: 00006

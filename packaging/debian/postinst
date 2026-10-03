@@ -1,0 +1,41 @@
+#!/bin/sh
+# Debian postinst — runs after package files are unpacked.
+# Same job as the RPM %post scriptlet (cmake/rpm_post_install.sh).
+# $1: configure | abort-upgrade | abort-remove | abort-deconfigure
+# $2 (configure): previously configured version; empty on a fresh install
+set -e
+
+[ "$1" = "configure" ] || exit 0
+
+# Load debconf so this package's templates (the purge question asked by
+# postrm) are registered while the package is installed. Once loaded, stdout
+# is debconf's command channel, so messages below go to stderr.
+if [ -e /usr/share/debconf/confmodule ]; then
+    . /usr/share/debconf/confmodule
+fi
+
+systemctl daemon-reload 2>/dev/null || true
+
+if [ -n "${2:-}" ]; then
+    # Upgrade: restart the service if it's running so the new binary and web
+    # files take effect. try-restart leaves a stopped/disabled service alone.
+    if systemctl try-restart flickimp 2>/dev/null; then
+        if systemctl is-active --quiet flickimp 2>/dev/null; then
+            echo "FlickImp upgraded; service restarted." >&2
+        else
+            echo "FlickImp upgraded (service not running; start it with: systemctl start flickimp)." >&2
+        fi
+    fi
+else
+    {
+        echo ""
+        echo "FlickImp installed.  To start the service:"
+        echo "  systemctl enable --now flickimp"
+        echo "  flickimp-config"
+        echo ""
+    } >&2
+fi
+
+exit 0
+
+# SN: 00006
