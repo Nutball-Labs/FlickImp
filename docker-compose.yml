@@ -1,12 +1,14 @@
-# Build and start:  docker compose up -d --build
+# Published image:    docker compose pull && docker compose up -d
+# Build from source:  docker compose up -d --build
 # Before first run, create the data dirs as the user who will own them, or
 # Docker creates them root-owned and the container user (UID 1000) can't write:
 #   mkdir -p data/config data/db
-# then put fi_config.json (with your TMDB token) in data/config/.
+# The TMDB token can go in data/config/fi_config.json, or be set later in the
+# web UI under ☰ → Settings.
 services:
   flickimp:
+    image: ghcr.io/nutball-labs/flickimp:latest
     build: .
-    image: flickimp:latest
     container_name: flickimp
     restart: unless-stopped
     ports:

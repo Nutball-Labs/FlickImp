@@ -60,20 +60,28 @@ upgrading and uninstalling.
 
 ### Docker
 
-A `Dockerfile` and `docker-compose.yml` are included for running FlickImp in a container
-on any Docker host. Config and the database live in `./data/` on the host:
+A ready-made image is published to the GitHub Container Registry for each release
+(x86_64). Config and the database live in `./data/` on the host:
 
 ```bash
 mkdir -p data/config data/db          # create these yourself, or Docker makes them root-owned
-cat > data/config/fi_config.json <<'JSON'
-{ "tmdb_bearer_token": "your-TMDB-read-access-token" }
-JSON
-docker compose up -d --build
+docker run -d --name flickimp --restart unless-stopped -p 8647:8647 \
+  -v "$PWD/data/config:/home/appuser/.config/flickimp" \
+  -v "$PWD/data/db:/home/appuser/.local/share/flickimp/db" \
+  ghcr.io/nutball-labs/flickimp:latest
 ```
 
-Then browse to `http://localhost:8647`. The container runs as UID 1000; if your host
-user has a different UID, `chown -R 1000:1000 data` so the container can write the DB.
-Upgrade with `git pull && docker compose up -d --build`.
+Then browse to `http://localhost:8647` and enter your TMDB token under ☰ → Settings
+(or put `{ "tmdb_bearer_token": "…" }` in `data/config/fi_config.json` before starting).
+Use a version tag such as `:1.7.0` instead of `:latest` to pin a release.
+
+From a source checkout, `docker-compose.yml` does the same: `docker compose pull && docker compose up -d`
+for the published image, or `docker compose up -d --build` to build it yourself.
+
+The container runs as UID 1000; if your host user has a different UID,
+`chown -R 1000:1000 data` so the container can write the database.
+Upgrade with `docker pull ghcr.io/nutball-labs/flickimp:latest`, then remove and re-run
+the container (your data stays in `./data/`).
 
 ---
 
