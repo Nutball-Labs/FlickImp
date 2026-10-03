@@ -48,15 +48,15 @@ You'll need a free TMDB API Read Access Token from
 |---|---|---|
 | Alma / RHEL / Fedora | `flickimp-X.Y.Z-1.x86_64.rpm` | `sudo dnf install ./flickimp-*.rpm` — runs as a systemd service; configure with `flickimp-config` |
 | Debian / Ubuntu | `flickimp_X.Y.Z_amd64.deb` | `sudo apt install ./flickimp_*.deb` |
-| Windows 10 / 11 (x64) | `flickimp-X.Y.Z-win64.zip` | Extract, double-click `install.cmd` — per-user, starts at logon, no admin needed |
-| macOS 11+ (Apple Silicon + Intel) | `flickimp-X.Y.Z-macOS.zip` / `.tar.gz` | Unpack, run `./install.sh` in Terminal — per-user, starts at login, no sudo needed |
+| Windows 10 / 11 | Docker image | Install [Docker Desktop](https://www.docker.com/products/docker-desktop/), then follow [Docker](#docker) below |
+| macOS | Docker image | Install [Docker Desktop](https://www.docker.com/products/docker-desktop/), then follow [Docker](#docker) below |
+| Any Docker host | `ghcr.io/nutball-labs/flickimp` | See [Docker](#docker) below |
 
 Then browse to `http://localhost:8647`.
 
-The Windows and macOS builds are unsigned: expect a SmartScreen "More info → Run anyway"
-prompt on Windows. On macOS, `install.sh` clears the download quarantine flag.
-See `README-Windows.txt` / `README-macOS.txt` inside each package for file locations,
-upgrading and uninstalling.
+Native Windows and macOS packages aren't published yet; Docker is the supported way to
+run FlickImp on those platforms for now. The image is x86_64, so on Apple Silicon Macs
+Docker Desktop runs it under Rosetta emulation.
 
 ### Docker
 
@@ -78,8 +78,19 @@ Use a version tag such as `:1.7.0` instead of `:latest` to pin a release.
 From a source checkout, `docker-compose.yml` does the same: `docker compose pull && docker compose up -d`
 for the published image, or `docker compose up -d --build` to build it yourself.
 
-The container runs as UID 1000; if your host user has a different UID,
-`chown -R 1000:1000 data` so the container can write the database.
+On **Windows** (PowerShell), the same thing:
+
+```powershell
+mkdir data\config, data\db
+docker run -d --name flickimp --restart unless-stopped -p 8647:8647 `
+  -v "${PWD}\data\config:/home/appuser/.config/flickimp" `
+  -v "${PWD}\data\db:/home/appuser/.local/share/flickimp/db" `
+  ghcr.io/nutball-labs/flickimp:latest
+```
+
+On Linux the container runs as UID 1000; if your host user has a different UID,
+`chown -R 1000:1000 data` so the container can write the database. Docker Desktop
+(Windows / macOS) handles this for you.
 Upgrade with `docker pull ghcr.io/nutball-labs/flickimp:latest`, then remove and re-run
 the container (your data stays in `./data/`).
 
